@@ -99,8 +99,11 @@ static bool VerifyPinnedPayloadForItem(int itemIndex, const std::wstring& path,
         return false;
     }
 
+    if (!HasPinnedSha256(itemIndex)) {
+        error = L"Для этой программы не задан проверенный SHA-256. Загрузка и запуск отключены.";
+        return false;
+    }
     const wchar_t* expected = kItems[itemIndex].sha256;
-    if (!expected || !*expected) return true;
 
     std::wstring actual;
     if (!GetFileSha256Hex(path, actual)) {

@@ -3356,11 +3356,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     }
 
     case WM_APP_DOWNLOAD_DONE: {
-        std::unique_ptr<DownloadMessage> result(reinterpret_cast<DownloadMessage*>(lParam));
-        if (!result) return 0;
-        if (result->itemIndex < 0 || static_cast<size_t>(result->itemIndex) >= kItemCount)
-            return 0;
-        const int itemIndex = result->itemIndex;
+        const int itemIndex = static_cast<int>(wParam);
+        if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return 0;
+        std::unique_ptr<DownloadMessage> result = TakeDownloadResult(itemIndex);
+        if (!result || result->itemIndex != itemIndex) return 0;
         MarkIdle(itemIndex);
         InvalidateAvailabilityCache(itemIndex);
         RefreshItemButtons(itemIndex);
@@ -3380,11 +3379,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     }
 
     case WM_APP_OPEN_READY: {
-        std::unique_ptr<OpenReadyMessage> result(reinterpret_cast<OpenReadyMessage*>(lParam));
-        if (!result) return 0;
-        if (result->itemIndex < 0 || static_cast<size_t>(result->itemIndex) >= kItemCount)
-            return 0;
-        const int itemIndex = result->itemIndex;
+        const int itemIndex = static_cast<int>(wParam);
+        if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return 0;
+        std::unique_ptr<OpenReadyMessage> result = TakeOpenReadyResult(itemIndex);
+        if (!result || result->itemIndex != itemIndex) return 0;
         MarkIdle(itemIndex);
         g_itemProgress[static_cast<size_t>(itemIndex)].store(0);
         RefreshItemButtons(itemIndex);
@@ -3404,9 +3402,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     }
 
     case WM_APP_DELETE_ALL_DONE: {
-        std::unique_ptr<DeleteAllMessage> result(reinterpret_cast<DeleteAllMessage*>(lParam));
-        g_deleteAllBusy.store(false);
+        std::unique_ptr<DeleteAllMessage> result = TakeDeleteAllResult();
         if (!result) return 0;
+        g_deleteAllBusy.store(false);
+
+        // Re-run cleanup after delete-all. If the app directory was removed this
+        // is a no-op; if deletion was partial it clears leftover .part files.
+        CleanupStalePartFiles(g_downloadDir);
 
         for (size_t i = 0; i < kItemCount; ++i)
             g_itemProgress[i].store(0);

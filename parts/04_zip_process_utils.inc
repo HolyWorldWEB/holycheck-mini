@@ -405,6 +405,8 @@ static std::wstring FindInstalledSystemInformerPath() {
     AddSystemInformerUninstallCandidates(candidates, HKEY_CURRENT_USER, KEY_WOW64_32KEY);
     AddSystemInformerUninstallCandidates(candidates, HKEY_CURRENT_USER, 0);
 
+    AddSystemInformerEnvironmentCandidate(candidates, L"ProgramW6432", L"SystemInformer\\SystemInformer.exe");
+    AddSystemInformerEnvironmentCandidate(candidates, L"ProgramW6432", L"System Informer\\SystemInformer.exe");
     AddSystemInformerEnvironmentCandidate(candidates, L"ProgramFiles", L"SystemInformer\\SystemInformer.exe");
     AddSystemInformerEnvironmentCandidate(candidates, L"ProgramFiles", L"System Informer\\SystemInformer.exe");
     AddSystemInformerEnvironmentCandidate(candidates, L"ProgramFiles(x86)", L"SystemInformer\\SystemInformer.exe");
@@ -440,6 +442,9 @@ static bool FindSystemInformerUninstallCommandInView(HKEY root, REGSAM view,
         std::wstring displayName;
         if (ReadRegistryStringValue(item, L"DisplayName", displayName) &&
             SystemInformerDisplayName(displayName)) {
+            // MSI products are removed through the documented Windows Installer
+            // path. For non-MSI installs, use the publisher-registered quiet
+            // command when available, then fall back to UninstallString.
             DWORD windowsInstaller = 0;
             const bool isMsi = ReadRegistryDwordValue(item, L"WindowsInstaller", windowsInstaller) &&
                                windowsInstaller != 0 && LooksLikeMsiProductCode(subName);
@@ -650,11 +655,9 @@ static bool FindInstalledProductUninstallCommandInView(
         std::wstring displayName;
         if (ReadRegistryStringValue(item, L"DisplayName", displayName) &&
             displayMatcher && displayMatcher(displayName)) {
-            // For MSI products prefer the documented Windows Installer path.
-            // This is both more predictable and safer than trusting a vendor
-            // bootstrapper stored in QuietUninstallString (often under
-            // ProgramData\Package Cache). For non-MSI products, prefer the
-            // publisher-provided quiet command and then the normal one.
+            // Prefer the documented Windows Installer path for MSI products.
+            // This avoids relying on vendor bootstrapper paths and guarantees
+            // that /I is not accidentally used instead of /X.
             DWORD windowsInstaller = 0;
             const bool isMsi = ReadRegistryDwordValue(item, L"WindowsInstaller", windowsInstaller) &&
                                windowsInstaller != 0 && LooksLikeMsiProductCode(subName);
@@ -707,6 +710,8 @@ static std::wstring FindInstalledRecuvaPath() {
                                     RecuvaDisplayName, LooksLikeRecuvaExecutable,
                                     { L"recuva64.exe", L"recuva.exe" });
 
+    AddInstalledEnvironmentCandidate(candidates, L"ProgramW6432", L"Recuva\\recuva64.exe", LooksLikeRecuvaExecutable);
+    AddInstalledEnvironmentCandidate(candidates, L"ProgramW6432", L"Recuva\\recuva.exe", LooksLikeRecuvaExecutable);
     AddInstalledEnvironmentCandidate(candidates, L"ProgramFiles", L"Recuva\\recuva64.exe", LooksLikeRecuvaExecutable);
     AddInstalledEnvironmentCandidate(candidates, L"ProgramFiles", L"Recuva\\recuva.exe", LooksLikeRecuvaExecutable);
     AddInstalledEnvironmentCandidate(candidates, L"ProgramFiles(x86)", L"Recuva\\recuva.exe", LooksLikeRecuvaExecutable);
@@ -777,7 +782,7 @@ static std::wstring FindInstalledFtkImagerPath() {
                                     FtkImagerDisplayName, LooksLikeFtkImagerExecutable,
                                     { L"FTK Imager.exe", L"FTKImager.exe", L"FTK Imager (x64).exe" });
 
-    for (const wchar_t* variable : { L"ProgramFiles", L"ProgramFiles(x86)" }) {
+    for (const wchar_t* variable : { L"ProgramW6432", L"ProgramFiles", L"ProgramFiles(x86)" }) {
         AddInstalledEnvironmentCandidate(candidates, variable, L"AccessData\\FTK Imager\\FTK Imager.exe", LooksLikeFtkImagerExecutable);
         AddInstalledEnvironmentCandidate(candidates, variable, L"AccessData\\FTK Imager\\FTKImager.exe", LooksLikeFtkImagerExecutable);
         AddInstalledEnvironmentCandidate(candidates, variable, L"Exterro\\FTK Imager\\FTK Imager.exe", LooksLikeFtkImagerExecutable);
@@ -790,7 +795,7 @@ static std::wstring FindInstalledFtkImagerPath() {
     // Some FTK Imager installers use a versioned subfolder and omit
     // InstallLocation/DisplayIcon. Search only the normal vendor directories,
     // with a small depth limit, instead of scanning Program Files globally.
-    for (const wchar_t* variable : { L"ProgramFiles", L"ProgramFiles(x86)" }) {
+    for (const wchar_t* variable : { L"ProgramW6432", L"ProgramFiles", L"ProgramFiles(x86)" }) {
         wchar_t base[32768]{};
         DWORD length = GetEnvironmentVariableW(variable, base, static_cast<DWORD>(ARRAYSIZE(base)));
         if (length == 0 || length >= ARRAYSIZE(base)) continue;
@@ -871,22 +876,18 @@ static bool IsTrustedUninstallerPath(std::wstring& executable) {
     std::wstring full(fullBuffer, fullLength);
     if (full.size() < 3 || full[1] != L':' || (full[2] != L'\\' && full[2] != L'/')) return false;
 
-    std::wstring programFiles, programFilesX86, programW6432, localAppData, programData;
+    std::wstring programW6432, programFiles, programFilesX86, localAppData, programData;
+    GetEnvironmentDirectory(L"ProgramW6432", programW6432);
     GetEnvironmentDirectory(L"ProgramFiles", programFiles);
     GetEnvironmentDirectory(L"ProgramFiles(x86)", programFilesX86);
-    // HolyCheck is commonly built as x86. On 64-bit Windows, %ProgramFiles%
-    // then points to Program Files (x86), while 64-bit applications live in
-    // %ProgramW6432% (normally C:\Program Files). Include that canonical
-    // directory so legitimate 64-bit uninstallers are not rejected.
-    GetEnvironmentDirectory(L"ProgramW6432", programW6432);
     GetEnvironmentDirectory(L"LOCALAPPDATA", localAppData);
     GetEnvironmentDirectory(L"ProgramData", programData);
     const std::wstring localPrograms = localAppData.empty() ? std::wstring() : JoinPath(localAppData, L"Programs");
     const std::wstring packageCache = programData.empty() ? std::wstring() : JoinPath(programData, L"Package Cache");
 
-    if (!IsPathUnderDirectory(full, programFiles) &&
+    if (!IsPathUnderDirectory(full, programW6432) &&
+        !IsPathUnderDirectory(full, programFiles) &&
         !IsPathUnderDirectory(full, programFilesX86) &&
-        !IsPathUnderDirectory(full, programW6432) &&
         !IsPathUnderDirectory(full, localPrograms) &&
         !IsPathUnderDirectory(full, packageCache)) {
         return false;
@@ -894,6 +895,23 @@ static bool IsTrustedUninstallerPath(std::wstring& executable) {
     if (!FileExists(full)) return false;
     executable.swap(full);
     return true;
+}
+
+static bool ShouldElevateTrustedUninstaller(const std::wstring& executable) {
+    const std::wstring fileName = LowerAscii(FileNameOnly(executable));
+    if (fileName == L"msiexec.exe" || fileName == L"msiexec") return true;
+
+    std::wstring programW6432, programFiles, programFilesX86, programData;
+    GetEnvironmentDirectory(L"ProgramW6432", programW6432);
+    GetEnvironmentDirectory(L"ProgramFiles", programFiles);
+    GetEnvironmentDirectory(L"ProgramFiles(x86)", programFilesX86);
+    GetEnvironmentDirectory(L"ProgramData", programData);
+    const std::wstring packageCache = programData.empty() ? std::wstring() : JoinPath(programData, L"Package Cache");
+
+    return IsPathUnderDirectory(executable, programW6432) ||
+           IsPathUnderDirectory(executable, programFiles) ||
+           IsPathUnderDirectory(executable, programFilesX86) ||
+           IsPathUnderDirectory(executable, packageCache);
 }
 
 static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
@@ -921,7 +939,10 @@ static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
     sei.cbSize = sizeof(sei);
     sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
     sei.hwnd = g_mainWindow;
-    sei.lpVerb = L"open";
+    // System-wide uninstallers need elevation to actually remove files and
+    // services. This is the normal Windows UAC path, not a bypass. Per-user
+    // uninstallers under LOCALAPPDATA continue to run without elevation.
+    sei.lpVerb = ShouldElevateTrustedUninstaller(executable) ? L"runas" : L"open";
     sei.lpFile = executable.c_str();
     sei.lpParameters = arguments.empty() ? nullptr : arguments.c_str();
     sei.nShow = SW_SHOWNORMAL;
@@ -1416,7 +1437,7 @@ static void StartArchiveExtractionAndOpen(int itemIndex) {
     HWND target = g_mainWindow;
 
     std::thread([target, itemIndex, zipPath, destination]() {
-        auto* message = new OpenReadyMessage;
+        auto message = std::make_unique<OpenReadyMessage>();
         message->itemIndex = itemIndex;
 
         HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -1453,8 +1474,8 @@ static void StartArchiveExtractionAndOpen(int itemIndex) {
         message->error = error;
         if (SUCCEEDED(com)) CoUninitialize();
 
-        if (!PostMessageW(target, WM_APP_OPEN_READY, 0, reinterpret_cast<LPARAM>(message))) {
-            delete message;
+        if (!PostOpenReadyResult(target, std::move(message))) {
+            MarkIdle(itemIndex);
         }
     }).detach();
 }

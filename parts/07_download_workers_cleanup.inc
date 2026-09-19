@@ -124,14 +124,16 @@ void DeleteAllDownloaded() {
             }
         }
 
+        // If deletion was partial, remove any stale partial downloads that are
+        // still reachable. This is intentionally repeatable, not one-shot.
+        CleanupStalePartFiles(g_downloadDir);
+
         InvalidateAvailabilityCache();
-        if (!PostMessageW(target, WM_APP_DELETE_ALL_DONE, 0,
-                          reinterpret_cast<LPARAM>(result.get()))) {
+        if (!PostDeleteAllResult(target, std::move(result))) {
             g_deleteAllBusy.store(false);
             if (shouldUninitialize) CoUninitialize();
             return;
         }
-        result.release();
         if (shouldUninitialize) CoUninitialize();
     }).detach();
 }

@@ -2,6 +2,15 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return;
     if (g_deleteAllBusy.load()) return;
 
+    // Release builds are fail-closed: never contact the network for an item
+    // whose exact payload has not been pinned.
+    if (!HasPinnedSha256(itemIndex)) {
+        MessageBoxW(g_mainWindow,
+                    L"Для этой программы пока нет проверенного SHA-256.\nЗагрузка отключена до фиксации хеша.",
+                    L"HolyCheck", MB_OK | MB_ICONWARNING);
+        return;
+    }
+
     // System Informer is special: once installed, the tile opens the installed
     // application and never launches the downloaded setup again.
     if (IsSystemInformerItemIndex(itemIndex) && !FindInstalledSystemInformerPath().empty()) {
@@ -51,13 +60,13 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
     std::thread([target, itemIndex, url, finalPath, fileName, openAfterDownload]() {
         std::wstring error;
         bool ok = DownloadHttpsFile(itemIndex, url, finalPath, fileName, error);
-        auto* message = new DownloadMessage;
+        auto message = std::make_unique<DownloadMessage>();
         message->itemIndex = itemIndex;
         message->ok = ok;
         message->openAfterDownload = openAfterDownload;
         message->text = error;
-        if (!PostMessageW(target, WM_APP_DOWNLOAD_DONE, 0, reinterpret_cast<LPARAM>(message))) {
-            delete message;
+        if (!PostDownloadResult(target, std::move(message))) {
+            MarkIdle(itemIndex);
         }
     }).detach();
 }
@@ -72,7 +81,8 @@ void DownloadCurrentTab() {
     // "Скачать все" скачивает все программы текущей вкладки, но не запускает
     // их пачкой. Автооткрытие выполняется только при клике по отдельной плитке.
     for (int i = 0; i < static_cast<int>(kItemCount); ++i) {
-        if (kItems[i].tab == g_currentTab && !IsItemAlreadyAvailable(i) && !IsBusy(i)) {
+        if (kItems[i].tab == g_currentTab && HasPinnedSha256(i) &&
+            !IsItemAlreadyAvailable(i) && !IsBusy(i)) {
             StartDownload(i, false);
         }
     }
