@@ -1,5 +1,6 @@
 void StartDownload(int itemIndex, bool openAfterDownload = true) {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return;
+    if (g_deleteAllBusy.load()) return;
 
     // System Informer is special: once installed, the tile opens the installed
     // application and never launches the downloaded setup again.
@@ -40,7 +41,7 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
     }
 
     RefreshItemButtons(itemIndex);
-    g_progressPercent.store(0);
+    g_itemProgress[static_cast<size_t>(itemIndex)].store(0);
     InvalidateRect(g_mainWindow, nullptr, FALSE);
 
     const std::wstring url = kItems[itemIndex].url;

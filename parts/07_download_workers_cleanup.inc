@@ -59,18 +59,15 @@ static bool DeleteDirectoryTreeNoReparse(const std::wstring& directory) {
 }
 
 void DeleteAllDownloaded() {
-    for (int i = 0; i < static_cast<int>(kItemCount); ++i) {
-        if (IsBusy(i)) {
-            MessageBoxW(g_mainWindow,
-                        L"Сначала дождитесь завершения текущих загрузок или распаковки.",
-                        L"HolyCheck", MB_OK | MB_ICONINFORMATION);
-            return;
-        }
-    }
-
-    bool expected = false;
-    if (!g_deleteAllBusy.compare_exchange_strong(expected, true))
+    // Busy-state and delete-state are claimed under the same mutex as
+    // StartDownload/MarkBusy, closing the race where a new .part file could be
+    // created just after the old pre-check.
+    if (!TryBeginDeleteAll()) {
+        MessageBoxW(g_mainWindow,
+                    L"Сначала дождитесь завершения текущих загрузок или распаковки.",
+                    L"HolyCheck", MB_OK | MB_ICONINFORMATION);
         return;
+    }
 
     HWND target = g_mainWindow;
     std::thread([target]() {
@@ -127,6 +124,7 @@ void DeleteAllDownloaded() {
             }
         }
 
+        InvalidateAvailabilityCache();
         if (!PostMessageW(target, WM_APP_DELETE_ALL_DONE, 0,
                           reinterpret_cast<LPARAM>(result.get()))) {
             g_deleteAllBusy.store(false);

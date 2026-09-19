@@ -11,7 +11,27 @@ std::wstring Win32ErrorText(DWORD error) {
 
 bool IsSimpleFileName(const std::wstring& name) {
     if (name.empty() || name == L"." || name == L"..") return false;
-    return name.find_first_of(L"\\/:*?\"<>|") == std::wstring::npos;
+    if (name.find_first_of(L"\\/:*?\"<>|") != std::wstring::npos) return false;
+    // Win32 normalizes trailing spaces/dots, so reject ambiguous names.
+    if (name.back() == L' ' || name.back() == L'.') return false;
+
+    std::wstring stem = name;
+    const size_t dot = stem.find(L'.');
+    if (dot != std::wstring::npos) stem.resize(dot);
+    while (!stem.empty() && (stem.back() == L' ' || stem.back() == L'.')) stem.pop_back();
+    for (wchar_t& ch : stem) {
+        if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
+    }
+
+    static const wchar_t* reserved[] = {
+        L"con", L"prn", L"aux", L"nul",
+        L"com1", L"com2", L"com3", L"com4", L"com5", L"com6", L"com7", L"com8", L"com9",
+        L"lpt1", L"lpt2", L"lpt3", L"lpt4", L"lpt5", L"lpt6", L"lpt7", L"lpt8", L"lpt9"
+    };
+    for (const wchar_t* value : reserved) {
+        if (stem == value) return false;
+    }
+    return !stem.empty();
 }
 
 std::wstring JoinPath(const std::wstring& dir, const std::wstring& file) {
@@ -33,6 +53,22 @@ bool DirectoryExists(const std::wstring& path) {
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
 }
 
+static void CleanupStalePartFiles(const std::wstring& directory) {
+    if (directory.empty() || !DirectoryExists(directory)) return;
+    const std::wstring mask = JoinPath(directory, L"*.part");
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileW(mask.c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+            const std::wstring path = JoinPath(directory, data.cFileName);
+            SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+            DeleteFileW(path.c_str());
+        }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
+
 bool InitDownloadDirectory() {
     PWSTR localAppData = nullptr;
     HRESULT hr = SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &localAppData);
@@ -49,6 +85,11 @@ bool InitDownloadDirectory() {
 
     if (!EnsureDirectory(g_downloadDir)) return false;
     if (!EnsureDirectory(g_extractDir)) return false;
+
+    static std::atomic<bool> cleaned{false};
+    bool expected = false;
+    if (cleaned.compare_exchange_strong(expected, true))
+        CleanupStalePartFiles(g_downloadDir);
     return true;
 }
 
@@ -59,7 +100,15 @@ bool IsBusy(int itemIndex) {
 
 bool MarkBusy(int itemIndex) {
     std::lock_guard<std::mutex> lock(g_busyMutex);
+    if (g_deleteAllBusy.load()) return false;
     return g_busyItems.insert(itemIndex).second;
+}
+
+bool TryBeginDeleteAll() {
+    std::lock_guard<std::mutex> lock(g_busyMutex);
+    if (g_deleteAllBusy.load() || !g_busyItems.empty()) return false;
+    g_deleteAllBusy.store(true);
+    return true;
 }
 
 void MarkIdle(int itemIndex) {

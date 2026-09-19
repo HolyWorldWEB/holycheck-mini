@@ -41,3 +41,75 @@ bool BasicPayloadCheck(const std::wstring& path, const std::wstring& fileName) {
     if (ends(L".rar")) return StartsWith(head, {0x52,0x61,0x72,0x21,0x1A,0x07});
     return true;
 }
+
+static bool GetFileSha256Hex(const std::wstring& path, std::wstring& hex) {
+    hex.clear();
+    HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING,
+                              FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                              nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+
+    HCRYPTPROV provider = 0;
+    HCRYPTHASH hash = 0;
+    bool ok = CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_AES,
+                                   CRYPT_VERIFYCONTEXT) != FALSE;
+    if (ok) ok = CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash) != FALSE;
+
+    std::vector<BYTE> buffer(256 * 1024);
+    while (ok) {
+        DWORD read = 0;
+        if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr)) {
+            ok = false;
+            break;
+        }
+        if (read == 0) break;
+        if (!CryptHashData(hash, buffer.data(), read, 0)) {
+            ok = false;
+            break;
+        }
+    }
+
+    BYTE digest[32]{};
+    DWORD digestBytes = sizeof(digest);
+    if (ok) ok = CryptGetHashParam(hash, HP_HASHVAL, digest, &digestBytes, 0) != FALSE &&
+                 digestBytes == sizeof(digest);
+
+    if (ok) {
+        static const wchar_t digits[] = L"0123456789abcdef";
+        hex.reserve(64);
+        for (BYTE b : digest) {
+            hex.push_back(digits[(b >> 4) & 0x0F]);
+            hex.push_back(digits[b & 0x0F]);
+        }
+    }
+
+    if (hash) CryptDestroyHash(hash);
+    if (provider) CryptReleaseContext(provider, 0);
+    CloseHandle(file);
+    return ok;
+}
+
+static bool VerifyPinnedPayloadForItem(int itemIndex, const std::wstring& path,
+                                       std::wstring& error) {
+    error.clear();
+    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) {
+        error = L"Некорректный индекс программы.";
+        return false;
+    }
+
+    const wchar_t* expected = kItems[itemIndex].sha256;
+    if (!expected || !*expected) return true;
+
+    std::wstring actual;
+    if (!GetFileSha256Hex(path, actual)) {
+        error = L"Не удалось вычислить SHA-256 загруженного файла.";
+        return false;
+    }
+    if (_wcsicmp(actual.c_str(), expected) != 0) {
+        error = L"SHA-256 файла не совпадает с ожидаемым. Файл не будет открыт.";
+        return false;
+    }
+    return true;
+}

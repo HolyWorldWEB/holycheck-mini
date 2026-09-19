@@ -1,5 +1,6 @@
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     g_instance = instance;
+    srand(static_cast<unsigned int>(time(nullptr)));
 
     HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
@@ -53,10 +54,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return 1;
     }
 
-    // Тёмная рамка окна на Windows 10/11. Это только визуальный атрибут DWM.
+    // Тёмная рамка окна на Windows 10/11. Номера атрибута отличаются между
+    // старыми и новыми сборками Windows, поэтому пробуем документированные/legacy
+    // варианты без зависимости от конкретной версии SDK.
     BOOL dark = TRUE;
-    const DWORD kDarkModeAttribute = 20;
-    DwmSetWindowAttribute(g_mainWindow, kDarkModeAttribute, &dark, sizeof(dark));
+    const DWORD darkModeAttributes[] = { 19u, 20u };
+    for (DWORD attribute : darkModeAttributes) {
+        if (SUCCEEDED(DwmSetWindowAttribute(g_mainWindow, attribute, &dark, sizeof(dark))))
+            break;
+    }
 
     ShowWindow(g_mainWindow, showCommand);
     UpdateWindow(g_mainWindow);

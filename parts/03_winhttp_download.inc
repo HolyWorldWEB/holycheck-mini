@@ -1,5 +1,6 @@
 bool DownloadHttpsFile(int itemIndex, const std::wstring& url, const std::wstring& finalPath,
                        const std::wstring& expectedFileName, std::wstring& error) {
+    constexpr unsigned long long kMaxDownloadBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
     URL_COMPONENTS components{};
     components.dwStructSize = sizeof(components);
     components.dwSchemeLength = static_cast<DWORD>(-1);
@@ -116,6 +117,10 @@ bool DownloadHttpsFile(int itemIndex, const std::wstring& url, const std::wstrin
         WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
                             WINHTTP_HEADER_NAME_BY_INDEX, &totalBytes, &totalBytesSize,
                             WINHTTP_NO_HEADER_INDEX);
+        if (totalBytes > 0 && static_cast<unsigned long long>(totalBytes) > kMaxDownloadBytes) {
+            error = L"Файл превышает допустимый размер загрузки (2 ГБ).";
+            break;
+        }
 
         HANDLE file = CreateFileW(partPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
                                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
@@ -125,7 +130,7 @@ bool DownloadHttpsFile(int itemIndex, const std::wstring& url, const std::wstrin
         }
 
         bool streamOk = true;
-        DWORD receivedTotal = 0;
+        unsigned long long receivedTotal = 0;
         int lastPercent = -1;
         std::vector<unsigned char> buffer(64 * 1024);
 
@@ -158,11 +163,16 @@ bool DownloadHttpsFile(int itemIndex, const std::wstring& url, const std::wstrin
                     break;
                 }
 
-                receivedTotal += read;
+                receivedTotal += static_cast<unsigned long long>(read);
                 available -= read;
+                if (receivedTotal > kMaxDownloadBytes) {
+                    error = L"Файл превысил допустимый размер загрузки (2 ГБ).";
+                    streamOk = false;
+                    break;
+                }
 
                 if (totalBytes > 0) {
-                    int percent = static_cast<int>((static_cast<unsigned long long>(receivedTotal) * 100ULL) / totalBytes);
+                    int percent = static_cast<int>((receivedTotal * 100ULL) / static_cast<unsigned long long>(totalBytes));
                     if (percent > 100) percent = 100;
                     if (percent != lastPercent) {
                         lastPercent = percent;
@@ -180,6 +190,10 @@ bool DownloadHttpsFile(int itemIndex, const std::wstring& url, const std::wstrin
 
         if (!BasicPayloadCheck(partPath, expectedFileName)) {
             error = L"Сервер вернул файл неожиданного формата.";
+            break;
+        }
+
+        if (!VerifyPinnedPayloadForItem(itemIndex, partPath, error)) {
             break;
         }
 

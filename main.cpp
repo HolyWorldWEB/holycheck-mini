@@ -16,8 +16,11 @@
 #include <gdiplus.h>
 #include <objidl.h>
 #include <dwmapi.h>
+#include <wincrypt.h>
 
 #include <algorithm>
+#include <array>
+#include <deque>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -54,7 +57,6 @@ namespace {
 #include "parts/10_filecheck_clipboard.inc"
 #include "parts/03_winhttp_download.inc"
 #include "parts/04_zip_process_utils.inc"
-#include "parts/05_fallback_sources.inc"
 #include "parts/06_download_methods_validation.inc"
 #include "parts/07_download_workers_cleanup.inc"
 #include "parts/08_ui_rendering_layout.inc"

@@ -87,6 +87,16 @@ static void TrackLaunchedProcess(int itemIndex, HANDLE process) {
     g_launchedProcesses.push_back({ itemIndex, process, pid });
 }
 
+static bool IsRegistryExplorerItemIndex(int itemIndex) {
+    return itemIndex >= 0 &&
+           static_cast<size_t>(itemIndex) < kItemCount &&
+           _wcsicmp(kItems[itemIndex].name, L"RegistryExplorer") == 0;
+}
+
+static bool IsPathUnderDirectory(const std::wstring& path, const std::wstring& base);
+static bool VerifyCachedExtractedPathForOpen(int itemIndex, const std::wstring& path,
+                                             std::wstring& error);
+
 static bool OpenTrackedPath(int itemIndex, const std::wstring& path, std::wstring& error) {
     if (path.empty() || !FileExists(path)) {
         error = L"Файл для запуска не найден.";
@@ -97,19 +107,58 @@ static bool OpenTrackedPath(int itemIndex, const std::wstring& path, std::wstrin
     // процесс этой же программы ещё работает.
     if (ActivateAlreadyRunningItem(itemIndex)) return true;
 
+    // Keep a read handle without write/delete sharing until ShellExecuteExW
+    // has opened the target. This narrows the check-to-launch race: another
+    // same-user process cannot replace the file between verification and launch.
+    HANDLE launchLock = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (launchLock == INVALID_HANDLE_VALUE) {
+        error = L"Не удалось заблокировать файл на время запуска: " +
+                Win32ErrorText(GetLastError());
+        return false;
+    }
+
+    // Verify while the no-write/no-delete-sharing lock is held. This closes
+    // the remaining local replacement window between the earlier check and
+    // ShellExecuteExW.
+    const std::wstring downloadedPath = ItemPath(itemIndex);
+    const std::wstring extractedRoot = ItemExtractDirectory(itemIndex);
+    bool integrityOk = true;
+    if (!downloadedPath.empty() && _wcsicmp(downloadedPath.c_str(), path.c_str()) == 0) {
+        integrityOk = VerifyPinnedPayloadForItem(itemIndex, path, error);
+    } else if (!extractedRoot.empty() && IsPathUnderDirectory(path, extractedRoot)) {
+        integrityOk = VerifyCachedExtractedPathForOpen(itemIndex, path, error);
+    }
+    if (!integrityOk) {
+        CloseHandle(launchLock);
+        return false;
+    }
+
+    // Registry Explorer для полноценного доступа к системным веткам реестра
+    // запускается через штатный Windows UAC. Никакого обхода UAC нет: пользователь
+    // видит обычное системное окно подтверждения. Остальные программы запускаются
+    // с обычными правами.
+    const bool elevate = IsRegistryExplorerItemIndex(itemIndex);
+
     SHELLEXECUTEINFOW sei{};
     sei.cbSize = sizeof(sei);
     sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
     sei.hwnd = g_mainWindow;
-    sei.lpVerb = L"open";
+    sei.lpVerb = elevate ? L"runas" : L"open";
     sei.lpFile = path.c_str();
     sei.nShow = SW_SHOWNORMAL;
 
     if (!ShellExecuteExW(&sei)) {
-        error = L"Windows не смогла открыть программу: " + Win32ErrorText(GetLastError());
+        const DWORD code = GetLastError();
+        CloseHandle(launchLock);
+        if (elevate && code == ERROR_CANCELLED)
+            error = L"Запуск Registry Explorer от имени администратора отменён.";
+        else
+            error = L"Windows не смогла открыть программу: " + Win32ErrorText(code);
         return false;
     }
 
+    CloseHandle(launchLock);
     if (sei.hProcess) TrackLaunchedProcess(itemIndex, sei.hProcess);
     return true;
 }
@@ -227,7 +276,19 @@ static bool ReadRegistryDwordValue(HKEY key, const wchar_t* valueName, DWORD& ou
 }
 
 static bool LooksLikeMsiProductCode(const std::wstring& text) {
-    return text.size() >= 38 && text.front() == L'{' && text.back() == L'}';
+    if (text.size() != 38 || text.front() != L'{' || text.back() != L'}') return false;
+    for (size_t i = 1; i + 1 < text.size(); ++i) {
+        if (i == 9 || i == 14 || i == 19 || i == 24) {
+            if (text[i] != L'-') return false;
+            continue;
+        }
+        const wchar_t ch = text[i];
+        const bool hex = (ch >= L'0' && ch <= L'9') ||
+                         (ch >= L'a' && ch <= L'f') ||
+                         (ch >= L'A' && ch <= L'F');
+        if (!hex) return false;
+    }
+    return true;
 }
 
 static std::wstring RegistryPathToExecutable(std::wstring raw) {
@@ -284,10 +345,10 @@ static void AddSystemInformerAppPathCandidates(std::vector<std::wstring>& candid
 }
 
 static bool SystemInformerDisplayName(const std::wstring& name) {
-    std::wstring lower = LowerAscii(name);
-    return lower.find(L"systeminformer") != std::wstring::npos ||
-           (lower.find(L"system") != std::wstring::npos &&
-            lower.find(L"informer") != std::wstring::npos);
+    const std::wstring lower = LowerAscii(TrimWhitespace(name));
+    return lower == L"system informer" || lower == L"systeminformer" ||
+           lower.rfind(L"system informer ", 0) == 0 ||
+           lower.rfind(L"systeminformer ", 0) == 0;
 }
 
 static void AddSystemInformerUninstallCandidates(std::vector<std::wstring>& candidates,
@@ -379,9 +440,14 @@ static bool FindSystemInformerUninstallCommandInView(HKEY root, REGSAM view,
         std::wstring displayName;
         if (ReadRegistryStringValue(item, L"DisplayName", displayName) &&
             SystemInformerDisplayName(displayName)) {
-            // Prefer the publisher-provided quiet command when it exists.
-            if (!ReadRegistryStringValue(item, L"QuietUninstallString", command))
+            DWORD windowsInstaller = 0;
+            const bool isMsi = ReadRegistryDwordValue(item, L"WindowsInstaller", windowsInstaller) &&
+                               windowsInstaller != 0 && LooksLikeMsiProductCode(subName);
+            if (isMsi) {
+                command = L"msiexec.exe /X" + std::wstring(subName) + L" /qn /norestart";
+            } else if (!ReadRegistryStringValue(item, L"QuietUninstallString", command)) {
                 ReadRegistryStringValue(item, L"UninstallString", command);
+            }
             found = !command.empty();
         }
         RegCloseKey(item);
@@ -454,14 +520,15 @@ static bool IsFtkImagerItemIndex(int itemIndex) {
 }
 
 static bool RecuvaDisplayName(const std::wstring& name) {
-    return LowerAscii(name).find(L"recuva") != std::wstring::npos;
+    const std::wstring lower = LowerAscii(TrimWhitespace(name));
+    return lower == L"recuva" || lower.rfind(L"recuva ", 0) == 0;
 }
 
 static bool FtkImagerDisplayName(const std::wstring& name) {
-    const std::wstring lower = LowerAscii(name);
-    return lower.find(L"ftk imager") != std::wstring::npos ||
-           (lower.find(L"ftk") != std::wstring::npos &&
-            lower.find(L"imager") != std::wstring::npos);
+    const std::wstring lower = LowerAscii(TrimWhitespace(name));
+    return lower == L"ftk imager" || lower.rfind(L"ftk imager ", 0) == 0 ||
+           lower.rfind(L"exterro ftk imager", 0) == 0 ||
+           lower.rfind(L"accessdata ftk imager", 0) == 0;
 }
 
 static bool LooksLikeRecuvaExecutable(const std::wstring& path) {
@@ -583,19 +650,18 @@ static bool FindInstalledProductUninstallCommandInView(
         std::wstring displayName;
         if (ReadRegistryStringValue(item, L"DisplayName", displayName) &&
             displayMatcher && displayMatcher(displayName)) {
-            // Prefer the vendor-provided quiet command. For MSI products, the
-            // uninstall subkey is normally the ProductCode; using msiexec /X
-            // is the documented Windows Installer uninstall path and avoids
-            // vendor setup UI when no QuietUninstallString is registered.
-            if (!ReadRegistryStringValue(item, L"QuietUninstallString", command)) {
-                DWORD windowsInstaller = 0;
-                const bool isMsi = ReadRegistryDwordValue(item, L"WindowsInstaller", windowsInstaller) &&
-                                   windowsInstaller != 0 && LooksLikeMsiProductCode(subName);
-                if (isMsi) {
-                    command = L"msiexec.exe /X" + std::wstring(subName) + L" /qn /norestart";
-                } else {
-                    ReadRegistryStringValue(item, L"UninstallString", command);
-                }
+            // For MSI products prefer the documented Windows Installer path.
+            // This is both more predictable and safer than trusting a vendor
+            // bootstrapper stored in QuietUninstallString (often under
+            // ProgramData\Package Cache). For non-MSI products, prefer the
+            // publisher-provided quiet command and then the normal one.
+            DWORD windowsInstaller = 0;
+            const bool isMsi = ReadRegistryDwordValue(item, L"WindowsInstaller", windowsInstaller) &&
+                               windowsInstaller != 0 && LooksLikeMsiProductCode(subName);
+            if (isMsi) {
+                command = L"msiexec.exe /X" + std::wstring(subName) + L" /qn /norestart";
+            } else if (!ReadRegistryStringValue(item, L"QuietUninstallString", command)) {
+                ReadRegistryStringValue(item, L"UninstallString", command);
             }
             found = !command.empty();
         }
@@ -758,6 +824,78 @@ static void NormalizeMsiUninstallArguments(std::wstring& arguments) {
     arguments = trimmed;
 }
 
+static bool IsPathUnderDirectory(const std::wstring& path, const std::wstring& base) {
+    if (path.empty() || base.empty() || path.size() < base.size()) return false;
+    if (_wcsnicmp(path.c_str(), base.c_str(), base.size()) != 0) return false;
+    if (path.size() == base.size()) return true;
+    const wchar_t next = path[base.size()];
+    return next == L'\\' || next == L'/';
+}
+
+static bool GetEnvironmentDirectory(const wchar_t* variable, std::wstring& out) {
+    out.clear();
+    wchar_t buffer[32768]{};
+    DWORD length = GetEnvironmentVariableW(variable, buffer, static_cast<DWORD>(ARRAYSIZE(buffer)));
+    if (length == 0 || length >= ARRAYSIZE(buffer)) return false;
+    out.assign(buffer, length);
+    while (!out.empty() && (out.back() == L'\\' || out.back() == L'/')) out.pop_back();
+    return !out.empty();
+}
+
+static bool IsTrustedUninstallerPath(std::wstring& executable) {
+    executable = TrimWhitespace(executable);
+    if (executable.empty()) return false;
+
+    const std::wstring fileName = LowerAscii(FileNameOnly(executable));
+    static const wchar_t* forbidden[] = {
+        L"cmd.exe", L"powershell.exe", L"pwsh.exe", L"wscript.exe",
+        L"cscript.exe", L"mshta.exe", L"rundll32.exe", L"regsvr32.exe"
+    };
+    for (const wchar_t* name : forbidden) {
+        if (fileName == name) return false;
+    }
+    if (executable.size() >= 2 && executable[0] == L'\\' && executable[1] == L'\\')
+        return false; // UNC paths are never accepted from UninstallString.
+
+    if (fileName == L"msiexec.exe" || fileName == L"msiexec") {
+        wchar_t systemDir[MAX_PATH]{};
+        const UINT length = GetSystemDirectoryW(systemDir, ARRAYSIZE(systemDir));
+        if (length == 0 || length >= ARRAYSIZE(systemDir)) return false;
+        executable = JoinPath(systemDir, L"msiexec.exe");
+        return FileExists(executable);
+    }
+
+    wchar_t fullBuffer[32768]{};
+    DWORD fullLength = GetFullPathNameW(executable.c_str(), ARRAYSIZE(fullBuffer), fullBuffer, nullptr);
+    if (fullLength == 0 || fullLength >= ARRAYSIZE(fullBuffer)) return false;
+    std::wstring full(fullBuffer, fullLength);
+    if (full.size() < 3 || full[1] != L':' || (full[2] != L'\\' && full[2] != L'/')) return false;
+
+    std::wstring programFiles, programFilesX86, programW6432, localAppData, programData;
+    GetEnvironmentDirectory(L"ProgramFiles", programFiles);
+    GetEnvironmentDirectory(L"ProgramFiles(x86)", programFilesX86);
+    // HolyCheck is commonly built as x86. On 64-bit Windows, %ProgramFiles%
+    // then points to Program Files (x86), while 64-bit applications live in
+    // %ProgramW6432% (normally C:\Program Files). Include that canonical
+    // directory so legitimate 64-bit uninstallers are not rejected.
+    GetEnvironmentDirectory(L"ProgramW6432", programW6432);
+    GetEnvironmentDirectory(L"LOCALAPPDATA", localAppData);
+    GetEnvironmentDirectory(L"ProgramData", programData);
+    const std::wstring localPrograms = localAppData.empty() ? std::wstring() : JoinPath(localAppData, L"Programs");
+    const std::wstring packageCache = programData.empty() ? std::wstring() : JoinPath(programData, L"Package Cache");
+
+    if (!IsPathUnderDirectory(full, programFiles) &&
+        !IsPathUnderDirectory(full, programFilesX86) &&
+        !IsPathUnderDirectory(full, programW6432) &&
+        !IsPathUnderDirectory(full, localPrograms) &&
+        !IsPathUnderDirectory(full, packageCache)) {
+        return false;
+    }
+    if (!FileExists(full)) return false;
+    executable.swap(full);
+    return true;
+}
+
 static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
                                           const std::wstring& command,
                                           std::wstring& error) {
@@ -767,6 +905,11 @@ static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
     if (executable.empty()) {
         error = L"В Windows не найдена корректная команда удаления " +
                 std::wstring(displayLabel) + L".";
+        return false;
+    }
+    if (!IsTrustedUninstallerPath(executable)) {
+        error = L"Windows зарегистрировала небезопасный путь деинсталлятора " +
+                std::wstring(displayLabel) + L". Запуск заблокирован.";
         return false;
     }
 
@@ -826,6 +969,7 @@ static bool LaunchRegisteredFtkImagerUninstallerNoWait(std::wstring& error) {
 }
 
 static bool IsItemAlreadyAvailable(int itemIndex) {
+    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return false;
     if (IsSystemInformerItemIndex(itemIndex) && !FindInstalledSystemInformerPath().empty())
         return true;
     if (IsRecuvaItemIndex(itemIndex) && !FindInstalledRecuvaPath().empty())
@@ -833,6 +977,45 @@ static bool IsItemAlreadyAvailable(int itemIndex) {
     if (IsFtkImagerItemIndex(itemIndex) && !FindInstalledFtkImagerPath().empty())
         return true;
     return FileExists(ItemPath(itemIndex));
+}
+
+// Drawing runs many times per second. Installed-program detection enumerates
+// several Uninstall registry branches, so cache it briefly instead of doing
+// registry I/O for every tile on every repaint.
+static std::mutex g_availabilityCacheMutex;
+static std::array<int, kItemCount> g_availabilityCache{}; // 0 unknown, 1 yes, -1 no
+static std::array<ULONGLONG, kItemCount> g_availabilityCacheTicks{};
+
+static void InvalidateAvailabilityCache(int itemIndex = -1) {
+    std::lock_guard<std::mutex> lock(g_availabilityCacheMutex);
+    if (itemIndex >= 0 && static_cast<size_t>(itemIndex) < kItemCount) {
+        g_availabilityCache[static_cast<size_t>(itemIndex)] = 0;
+        g_availabilityCacheTicks[static_cast<size_t>(itemIndex)] = 0;
+        return;
+    }
+    g_availabilityCache.fill(0);
+    g_availabilityCacheTicks.fill(0);
+}
+
+static bool IsItemAlreadyAvailableCached(int itemIndex) {
+    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return false;
+    const size_t index = static_cast<size_t>(itemIndex);
+    const ULONGLONG now = GetTickCount64();
+    {
+        std::lock_guard<std::mutex> lock(g_availabilityCacheMutex);
+        if (g_availabilityCache[index] != 0 &&
+            now - g_availabilityCacheTicks[index] <= 2000ULL) {
+            return g_availabilityCache[index] > 0;
+        }
+    }
+
+    const bool available = IsItemAlreadyAvailable(itemIndex);
+    {
+        std::lock_guard<std::mutex> lock(g_availabilityCacheMutex);
+        g_availabilityCache[index] = available ? 1 : -1;
+        g_availabilityCacheTicks[index] = now;
+    }
+    return available;
 }
 
 // ZIP распаковывается штатным Shell Namespace API Windows.
@@ -1090,20 +1273,73 @@ static int ExecutableCandidateScore(int itemIndex, const std::wstring& path) {
 
 static std::mutex g_launchPathCacheMutex;
 static std::vector<std::wstring> g_launchPathCache(kItemCount);
+static std::vector<std::wstring> g_launchHashCache(kItemCount);
+
+static void ClearCachedLaunchPath(int itemIndex) {
+    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return;
+    std::lock_guard<std::mutex> lock(g_launchPathCacheMutex);
+    g_launchPathCache[static_cast<size_t>(itemIndex)].clear();
+    g_launchHashCache[static_cast<size_t>(itemIndex)].clear();
+}
 
 static std::wstring GetCachedLaunchPath(int itemIndex) {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return {};
-    std::lock_guard<std::mutex> lock(g_launchPathCacheMutex);
-    std::wstring& cached = g_launchPathCache[static_cast<size_t>(itemIndex)];
-    if (!cached.empty() && FileExists(cached)) return cached;
-    cached.clear();
-    return {};
+    const size_t index = static_cast<size_t>(itemIndex);
+    std::wstring cachedPath;
+    std::wstring cachedHash;
+    {
+        std::lock_guard<std::mutex> lock(g_launchPathCacheMutex);
+        cachedPath = g_launchPathCache[index];
+        cachedHash = g_launchHashCache[index];
+    }
+    if (cachedPath.empty() || cachedHash.empty() || !FileExists(cachedPath)) {
+        ClearCachedLaunchPath(itemIndex);
+        return {};
+    }
+
+    // The extracted directory is user-writable. Re-hash the executable before
+    // every later launch so a same-user process cannot silently replace it.
+    std::wstring actualHash;
+    if (!GetFileSha256Hex(cachedPath, actualHash) ||
+        _wcsicmp(actualHash.c_str(), cachedHash.c_str()) != 0) {
+        ClearCachedLaunchPath(itemIndex);
+        return {};
+    }
+    return cachedPath;
 }
 
-static void SetCachedLaunchPath(int itemIndex, const std::wstring& path) {
-    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return;
+static bool SetCachedLaunchPath(int itemIndex, const std::wstring& path) {
+    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount || !FileExists(path)) return false;
+    std::wstring hash;
+    if (!GetFileSha256Hex(path, hash)) return false;
     std::lock_guard<std::mutex> lock(g_launchPathCacheMutex);
-    g_launchPathCache[static_cast<size_t>(itemIndex)] = path;
+    const size_t index = static_cast<size_t>(itemIndex);
+    g_launchPathCache[index] = path;
+    g_launchHashCache[index] = hash;
+    return true;
+}
+
+static bool VerifyCachedExtractedPathForOpen(int itemIndex, const std::wstring& path,
+                                             std::wstring& error) {
+    if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return false;
+    std::wstring cachedPath, expectedHash;
+    {
+        std::lock_guard<std::mutex> lock(g_launchPathCacheMutex);
+        const size_t index = static_cast<size_t>(itemIndex);
+        cachedPath = g_launchPathCache[index];
+        expectedHash = g_launchHashCache[index];
+    }
+    if (cachedPath.empty() || expectedHash.empty() || _wcsicmp(cachedPath.c_str(), path.c_str()) != 0) {
+        error = L"Распакованный файл не прошёл проверку целостности.";
+        return false;
+    }
+    std::wstring actualHash;
+    if (!GetFileSha256Hex(path, actualHash) ||
+        _wcsicmp(actualHash.c_str(), expectedHash.c_str()) != 0) {
+        error = L"Распакованный файл был изменён после распаковки и не будет запущен.";
+        return false;
+    }
+    return true;
 }
 
 static std::wstring FindNamedExecutableRecursive(const std::wstring& directory,
@@ -1146,8 +1382,7 @@ static std::wstring FindBestExtractedExecutable(int itemIndex, const std::wstrin
     const wchar_t* preferred = PreferredArchiveExecutable(itemIndex);
     if (preferred) {
         std::wstring exact = FindNamedExecutableRecursive(directory, preferred);
-        if (!exact.empty()) {
-            SetCachedLaunchPath(itemIndex, exact);
+        if (!exact.empty() && SetCachedLaunchPath(itemIndex, exact)) {
             return exact;
         }
     }
@@ -1167,8 +1402,9 @@ static std::wstring FindBestExtractedExecutable(int itemIndex, const std::wstrin
         }
     }
 
-    SetCachedLaunchPath(itemIndex, candidates[bestIndex]);
-    return candidates[bestIndex];
+    if (SetCachedLaunchPath(itemIndex, candidates[bestIndex]))
+        return candidates[bestIndex];
+    return {};
 }
 
 static void StartArchiveExtractionAndOpen(int itemIndex) {
@@ -1185,8 +1421,20 @@ static void StartArchiveExtractionAndOpen(int itemIndex) {
 
         HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         std::wstring error;
-        bool ok = !zipPath.empty() && !destination.empty() &&
-                  ExtractZipWithWindowsShell(zipPath, destination, error);
+        bool ok = !zipPath.empty() && !destination.empty();
+
+        // Re-check the pinned archive immediately before extraction. Also
+        // remove old extracted content so files from different versions can
+        // never be mixed together.
+        if (ok) ok = VerifyPinnedPayloadForItem(itemIndex, zipPath, error);
+        if (ok) {
+            ClearCachedLaunchPath(itemIndex);
+            if (DirectoryExists(destination) && !DeleteDirectoryTreeNoReparse(destination)) {
+                ok = false;
+                error = L"Не удалось очистить старую папку распаковки.";
+            }
+        }
+        if (ok) ok = ExtractZipWithWindowsShell(zipPath, destination, error);
 
         if (ok && !WaitForExtractionToSettle(destination, 60000)) {
             ok = false;
@@ -1213,7 +1461,7 @@ static void StartArchiveExtractionAndOpen(int itemIndex) {
 
 void OpenDownloadedItem(int itemIndex) {
     if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return;
-    if (IsBusy(itemIndex)) return;
+    if (g_deleteAllBusy.load() || IsBusy(itemIndex)) return;
 
     // If System Informer is already installed, always launch the installed
     // application instead of re-opening its setup executable.
@@ -1258,6 +1506,11 @@ void OpenDownloadedItem(int itemIndex) {
     }
 
     std::wstring error;
+    if (!VerifyPinnedPayloadForItem(itemIndex, path, error)) {
+        MessageBoxW(g_mainWindow, error.c_str(), L"HolyCheck", MB_OK | MB_ICONERROR);
+        return;
+    }
+
     if (EndsWithI(kItems[itemIndex].file, L".zip")) {
         if (!InitDownloadDirectory()) {
             MessageBoxW(g_mainWindow, L"Не удалось подготовить папки HolyCheck.",
@@ -1266,7 +1519,10 @@ void OpenDownloadedItem(int itemIndex) {
         }
 
         const std::wstring destination = ItemExtractDirectory(itemIndex);
-        std::wstring executable = FindBestExtractedExecutable(itemIndex, destination);
+        // Only a path produced and hashed by this running HolyCheck instance is
+        // reused. After restart we re-extract from the verified archive rather
+        // than trusting stale user-writable Extracted content.
+        std::wstring executable = GetCachedLaunchPath(itemIndex);
         if (!executable.empty()) {
             if (!OpenTrackedPath(itemIndex, executable, error))
                 MessageBoxW(g_mainWindow, error.c_str(), L"HolyCheck", MB_OK | MB_ICONERROR);

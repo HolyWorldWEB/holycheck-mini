@@ -11,7 +11,6 @@ static void InitParticles(int width, int height) {
     const int safeParticleH = std::max(safeH - 70, 1);
     if (safeW < 100 || safeH < 100) return;
 
-    srand(static_cast<unsigned int>(time(nullptr)));
     for (int i = 0; i < 84; ++i) {
         Particle p{};
         p.x = 2.0f + static_cast<float>(rand() % std::max(safeW - 4, 1));
@@ -244,7 +243,7 @@ static void DrawDownloadLog(Graphics& g, RECT rc) {
     SolidBrush textBrush(Color(255, 191, 194, 202));
     g.DrawString(L"Лог загрузки", -1, &titleFont, RectF(x + 14, y + 10, w - 28, 20), nullptr, &titleBrush);
 
-    std::vector<std::wstring> lines;
+    std::deque<std::wstring> lines;
     {
         std::lock_guard<std::mutex> lock(g_logMutex);
         lines = g_logLines;
@@ -270,7 +269,17 @@ static void DrawProgressBar(Graphics& g, RECT rc) {
     SolidBrush bgBrush(Color(255, 42, 42, 46));
     g.FillPath(&bgBrush, &bgPath);
 
-    const int percent = std::max(0, std::min(100, g_progressPercent.load()));
+    int progressTotal = 0;
+    int progressCount = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_busyMutex);
+        for (int index : g_busyItems) {
+            if (index < 0 || static_cast<size_t>(index) >= kItemCount) continue;
+            progressTotal += std::clamp(g_itemProgress[static_cast<size_t>(index)].load(), 0, 100);
+            ++progressCount;
+        }
+    }
+    const int percent = progressCount > 0 ? progressTotal / progressCount : 0;
     const float fillW = width * percent / 100.0f;
     if (fillW > 0.5f) {
         GraphicsPath fillPath;
@@ -3021,7 +3030,7 @@ static void DrawOwnerButtonToDc(DRAWITEMSTRUCT* d) {
         }
         font = g_smallFont ? g_smallFont : g_font;
 
-        if (!IsBusy(index) && IsItemAlreadyAvailable(index)) {
+        if (!IsBusy(index) && IsItemAlreadyAvailableCached(index)) {
             SetTextColor(d->hDC, RGB(128, 220, 150));
             HGDIOBJ oldFont = SelectObject(d->hDC, g_smallFont ? g_smallFont : g_font);
             RECT checkRect = r;
@@ -3254,10 +3263,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         lf.lfWeight = FW_SEMIBOLD;
         g_smallFont = CreateFontIndirectW(&lf);
 
-        lf.lfHeight = -11;
-        lf.lfWeight = FW_SEMIBOLD;
-        g_tinyFont = CreateFontIndirectW(&lf);
-
         g_deleteAll = CreateOwnerButton(hwnd, IDC_DELETE_ALL, L"Удалить всё");
         g_downloadAll = CreateOwnerButton(hwnd, IDC_DOWNLOAD_ALL, L"Скачать все");
 
@@ -3341,23 +3346,31 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         break;
     }
 
-    case WM_APP_DOWNLOAD_PROGRESS:
-        g_progressPercent.store(std::max(0, std::min(100, static_cast<int>(lParam))));
+    case WM_APP_DOWNLOAD_PROGRESS: {
+        const int itemIndex = static_cast<int>(wParam);
+        if (itemIndex < 0 || static_cast<size_t>(itemIndex) >= kItemCount) return 0;
+        g_itemProgress[static_cast<size_t>(itemIndex)].store(
+            std::clamp(static_cast<int>(lParam), 0, 100));
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    }
 
     case WM_APP_DOWNLOAD_DONE: {
         std::unique_ptr<DownloadMessage> result(reinterpret_cast<DownloadMessage*>(lParam));
         if (!result) return 0;
-        MarkIdle(result->itemIndex);
-        RefreshItemButtons(result->itemIndex);
+        if (result->itemIndex < 0 || static_cast<size_t>(result->itemIndex) >= kItemCount)
+            return 0;
+        const int itemIndex = result->itemIndex;
+        MarkIdle(itemIndex);
+        InvalidateAvailabilityCache(itemIndex);
+        RefreshItemButtons(itemIndex);
 
         if (result->ok) {
-            AddLog(std::wstring(kItems[result->itemIndex].name) + L": скачана");
-            if (result->openAfterDownload) OpenDownloadedItem(result->itemIndex);
+            AddLog(std::wstring(kItems[itemIndex].name) + L": скачана");
+            if (result->openAfterDownload) OpenDownloadedItem(itemIndex);
         } else {
-            g_progressPercent.store(0);
-            std::wstring text = L"Не удалось скачать " + std::wstring(kItems[result->itemIndex].name);
+            g_itemProgress[static_cast<size_t>(itemIndex)].store(0);
+            std::wstring text = L"Не удалось скачать " + std::wstring(kItems[itemIndex].name);
             if (!result->text.empty()) text += L".\n\n" + result->text;
             MessageBoxW(hwnd, text.c_str(), L"HolyCheck", MB_OK | MB_ICONERROR);
         }
@@ -3369,8 +3382,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     case WM_APP_OPEN_READY: {
         std::unique_ptr<OpenReadyMessage> result(reinterpret_cast<OpenReadyMessage*>(lParam));
         if (!result) return 0;
-        MarkIdle(result->itemIndex);
-        RefreshItemButtons(result->itemIndex);
+        if (result->itemIndex < 0 || static_cast<size_t>(result->itemIndex) >= kItemCount)
+            return 0;
+        const int itemIndex = result->itemIndex;
+        MarkIdle(itemIndex);
+        g_itemProgress[static_cast<size_t>(itemIndex)].store(0);
+        RefreshItemButtons(itemIndex);
 
         if (!result->ok) {
             const std::wstring text = result->error.empty()
@@ -3379,9 +3396,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             MessageBoxW(hwnd, text.c_str(), L"HolyCheck", MB_OK | MB_ICONERROR);
         } else {
             std::wstring error;
-            if (!OpenTrackedPath(result->itemIndex, result->path, error))
+            if (!OpenTrackedPath(itemIndex, result->path, error))
                 MessageBoxW(hwnd, error.c_str(), L"HolyCheck", MB_OK | MB_ICONERROR);
         }
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
 
@@ -3390,7 +3408,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         g_deleteAllBusy.store(false);
         if (!result) return 0;
 
-        g_progressPercent.store(0);
+        for (size_t i = 0; i < kItemCount; ++i)
+            g_itemProgress[i].store(0);
+        InvalidateAvailabilityCache();
         for (int i = 0; i < static_cast<int>(kItemCount); ++i)
             RefreshItemButtons(i);
 
@@ -3401,8 +3421,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                 if (loggedRemoved.insert(key).second)
                     AddLog(name + L": удалена");
             };
-            for (int index : result->existingItems)
-                logRemovedOnce(kItems[index].name);
+            for (int index : result->existingItems) {
+                if (index >= 0 && static_cast<size_t>(index) < kItemCount)
+                    logRemovedOnce(kItems[index].name);
+            }
 
             // External applications are logged only after Windows no longer
             // reports their executable as installed. Their uninstallers run
@@ -3414,10 +3436,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             if (result->ftkImagerWasInstalled && FindInstalledFtkImagerPath().empty())
                 logRemovedOnce(L"FTK Imager");
         } else {
-            MessageBoxW(hwnd,
-                        L"Не удалось полностью удалить %LOCALAPPDATA%\\HolyCheck. "
-                        L"Одна из открытых программ всё ещё использует файлы.",
-                        L"HolyCheck", MB_OK | MB_ICONWARNING);
+            const std::wstring failedPath = g_appDir.empty() ? L"папку HolyCheck" : g_appDir;
+            const std::wstring text = L"Не удалось полностью удалить " + failedPath +
+                                      L". Одна из открытых программ всё ещё использует файлы.";
+            MessageBoxW(hwnd, text.c_str(), L"HolyCheck", MB_OK | MB_ICONWARNING);
         }
 
         std::wstring uninstallErrors;
@@ -3451,8 +3473,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         ReleaseTrackedProcessHandles();
         if (g_font) DeleteObject(g_font);
         if (g_smallFont) DeleteObject(g_smallFont);
-        if (g_tinyFont) DeleteObject(g_tinyFont);
-        g_font = g_smallFont = g_tinyFont = nullptr;
+        g_font = g_smallFont = nullptr;
         PostQuitMessage(0);
         return 0;
     }
