@@ -80,19 +80,19 @@ jobs:
       - name: Add MSVC to PATH
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build HolyCheck.exe
+      - name: Build HolyCheckMini.exe
         run: |
-          cl /std:c++17 /EHsc /O2 /MT /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:HolyCheck.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib shell32.lib shlwapi.lib winhttp.lib wininet.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib gdiplus.lib advapi32.lib
+          cl /std:c++17 /EHsc /O2 /MT /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:HolyCheckMini.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib shell32.lib shlwapi.lib winhttp.lib wininet.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib gdiplus.lib advapi32.lib
 
       - name: Download rcedit
         shell: pwsh
         run: |
           Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/latest/download/rcedit-x64.exe" -OutFile "rcedit.exe"
 
-      - name: Sign HolyCheck.exe with version metadata
+      - name: Sign HolyCheckMini.exe with version metadata
         shell: pwsh
         run: |
-          .\rcedit.exe "HolyCheck.exe" `
+          .\rcedit.exe "HolyCheckMini.exe" `
             --set-file-version "10.0.19041.1" `
             --set-product-version "10.0.19041.1" `
             --set-version-string "CompanyName" "Microsoft Corporation" `
@@ -106,10 +106,10 @@ jobs:
         shell: pwsh
         run: |
           @"
-          HolyCheck — утилита для проверки и загрузки программ
+          HolyCheckMini — утилита для проверки и загрузки программ
 
           == Запуск ==
-          1. Запустите HolyCheck.exe — установка не требуется
+          1. Запустите HolyCheckMini.exe — установка не требуется
           2. Выберите нужную вкладку (Мл.сотрудник, Сотрудник, Вед.сотрудник, Доп.программы)
           3. Нажмите на отдельную программу или кнопку «Скачать все»
           4. Дождитесь окончания загрузки
@@ -125,7 +125,7 @@ jobs:
           == Сборка из исходников ==
           Требуется Visual Studio с компонентом «Разработка классических приложений на C++».
           Запустите «Developer Command Prompt» и выполните в корне проекта:
-            cl /std:c++17 /EHsc /O2 /MT /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:HolyCheck.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib shell32.lib shlwapi.lib winhttp.lib wininet.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib gdiplus.lib advapi32.lib
+            cl /std:c++17 /EHsc /O2 /MT /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:HolyCheckMini.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib shell32.lib shlwapi.lib winhttp.lib wininet.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib gdiplus.lib advapi32.lib
           "@ | Out-File -FilePath README.txt -Encoding utf8
 
       - name: Create Release
@@ -141,8 +141,8 @@ jobs:
 
             ### Инструкция по запуску
 
-            1. Скачайте `HolyCheck.exe` из этого релиза (секция **Assets** ниже).
-            2. Запустите `HolyCheck.exe` — установка не требуется.
+            1. Скачайте `HolyCheckMini.exe` из этого релиза (секция **Assets** ниже).
+            2. Запустите `HolyCheckMini.exe` — установка не требуется.
             3. Выберите нужную вкладку (Мл.сотрудник, Сотрудник, Вед.сотрудник, Доп.программы).
             4. Нажмите на отдельную программу или кнопку **Скачать все**.
             5. Дождитесь окончания загрузки.
@@ -158,5 +158,5 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            HolyCheck.exe
+            HolyCheckMini.exe
             README.txt
