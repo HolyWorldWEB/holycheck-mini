@@ -81,8 +81,21 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Build HolyCheckMini.exe
+        shell: pwsh
         run: |
-          cl /std:c++17 /EHsc /O2 /MT /utf-8 /DUNICODE /D_UNICODE main.cpp /Fe:HolyCheckMini.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib shell32.lib shlwapi.lib winhttp.lib wininet.lib ole32.lib oleaut32.lib uuid.lib dwmapi.lib gdiplus.lib advapi32.lib
+          rc /nologo /fo HolyCheck.res parts\app_icon.rc
+          if ($LASTEXITCODE -ne 0) {
+            throw "Resource compilation failed"
+          }
+
+          cl /nologo /std:c++17 /EHsc /O2 /MT /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /DNTDDI_VERSION=0x0A000000 main.cpp HolyCheck.res /Fe:HolyCheckMini.exe /link /SUBSYSTEM:WINDOWS
+          if ($LASTEXITCODE -ne 0) {
+            throw "HolyCheckMini compilation failed"
+          }
+
+          if (-not (Test-Path -LiteralPath HolyCheckMini.exe)) {
+            throw "HolyCheckMini.exe was not created"
+          }
 
       - name: Create README.txt
         shell: pwsh
