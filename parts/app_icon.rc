@@ -1,0 +1,3 @@
+// Build from the main.cpp directory.
+101 ICON "parts/app.ico"
+103 RCDATA "parts/folder.png"

@@ -16,7 +16,31 @@
 #include <gdiplus.h>
 #include <objidl.h>
 #include <dwmapi.h>
+#include <mmsystem.h>
 #include <wincrypt.h>
+#include <shlwapi.h>
+#include <sddl.h>
+#include <aclapi.h>
+#include <msi.h>
+#include <wintrust.h>
+#include <softpub.h>
+#include <tlhelp32.h>
+#include <restartmanager.h>
+#include "parts/pe_reader.h"
+#include "parts/zip_reader.h"
+#include "parts/worker_pool.h"
+#include "parts/frame_pacer.h"
+#include "parts/win_frame_clock.h"
+#include "parts/command_parser.h"
+#include "parts/installed_policy.h"
+#include "parts/storage_layout.h"
+#include "parts/uninstall_policy.h"
+#include "parts/ui_layout.h"
+#include "parts/full_log.h"
+#include "parts/file_policy.h"
+#include "parts/url_policy.h"
+#include "parts/network_policy.h"
+#include "parts/update_manifest.h"
 
 #include <algorithm>
 #include <array>
@@ -29,13 +53,20 @@
 #include <initializer_list>
 #include <ctime>
 #include <memory>
+#include <new>
+#include <map>
 #include <mutex>
+#include <condition_variable>
+#include <functional>
+#include <chrono>
+#include <limits>
 #include <set>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#ifdef _MSC_VER
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
 #pragma comment(lib, "comctl32.lib")
@@ -46,8 +77,14 @@
 #pragma comment(lib, "oleaut32.lib")
 #pragma comment(lib, "uuid.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "crypt32.lib")
+#pragma comment(lib, "msi.lib")
+#pragma comment(lib, "wintrust.lib")
+#pragma comment(lib, "Rstrtmgr.lib")
+#endif
 
 using namespace Gdiplus;
 
