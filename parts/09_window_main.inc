@@ -19,18 +19,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         MessageBoxW(nullptr, L"HolyCheck уже запущен для этого пользователя.", L"HolyCheck", MB_OK);
         return 0;
     }
-    FullLogSession journal;
-    const DWORD logError = journal.Start();
-    if (logError != ERROR_SUCCESS) {
-        const auto message = L"Не удалось открыть Загрузки\\holycheckfull.txt (код " + std::to_wstring(logError) +
-            L"). Полный журнал недоступен; проверьте права и отсутствие ссылок/занятости файла.";
-        MessageBoxW(nullptr,message.c_str(),L"HolyCheck",MB_OK|MB_ICONWARNING);
-    }
     g_instance = instance;
     srand(static_cast<unsigned int>(time(nullptr)));
 
     HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    FullLog(L"STARTUP COM=" + std::to_wstring(com));
+    (void)0;
 
     GdiplusStartupInput gdiplusInput;
     if (GdiplusStartup(&g_gdiplusToken, &gdiplusInput, nullptr) != Ok) {
@@ -45,14 +38,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     InitCommonControlsEx(&commonControls);
 
     if (!InitDownloadDirectory()) {
-        FullLog(L"STARTUP storage failed code=" + std::to_wstring(GetLastError()));
+        (void)0;
         MessageBoxW(nullptr, L"Не удалось создать папку HolyCheck в Загрузках. Проверьте доступ и отсутствие junction/reparse в пути.", L"HolyCheck", MB_OK | MB_ICONERROR);
         GdiplusShutdown(g_gdiplusToken);
         if (SUCCEEDED(com)) CoUninitialize();
         return 1;
     }
 
-    FullLog(L"STARTUP storage ready; five tab folders");
+    (void)0;
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.style = CS_DBLCLKS;
@@ -63,14 +56,14 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         GetSystemMetrics(SM_CXICON),GetSystemMetrics(SM_CYICON),LR_SHARED));
     wc.hIconSm = static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(IDI_HOLYCHECK),IMAGE_ICON,
         GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_SHARED));
-    if(!wc.hIcon||!wc.hIconSm)FullLog(L"ICON resource missing; build and link parts/app_icon.rc");
+    if(!wc.hIcon||!wc.hIconSm)(void)0;
     if(!wc.hIcon)wc.hIcon=LoadIconW(nullptr,IDI_APPLICATION);
     if(!wc.hIconSm)wc.hIconSm=wc.hIcon;
     wc.hbrBackground = nullptr;
     wc.lpszClassName = kWindowClass;
 
     if (!RegisterClassExW(&wc)) {
-        FullLog(L"STARTUP RegisterClass error="+std::to_wstring(GetLastError()));
+        (void)0;
         MessageBoxW(nullptr, L"Не удалось зарегистрировать окно.", L"HolyCheck", MB_OK | MB_ICONERROR);
         GdiplusShutdown(g_gdiplusToken);
         if (SUCCEEDED(com)) CoUninitialize();
@@ -84,7 +77,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         nullptr, nullptr, instance, nullptr);
 
     if (!g_mainWindow) {
-        FullLog(L"STARTUP CreateWindow error="+std::to_wstring(GetLastError()));
+        (void)0;
         MessageBoxW(nullptr, L"Не удалось создать окно.", L"HolyCheck", MB_OK | MB_ICONERROR);
         GdiplusShutdown(g_gdiplusToken);
         if (SUCCEEDED(com)) CoUninitialize();
@@ -116,7 +109,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         DispatchMessageW(&msg);
     }
 
-    FullLog(L"MESSAGE LOOP end status="+std::to_wstring(messageStatus));
+    (void)0;
     JoinWorkers();
     if (g_gdiplusToken) GdiplusShutdown(g_gdiplusToken);
     if (SUCCEEDED(com)) CoUninitialize();

@@ -22,16 +22,6 @@ constexpr int TAB_COUNT = 5;
 constexpr COLORREF BG = RGB(18, 18, 19);
 constexpr COLORREF TEXT = RGB(228, 229, 233);
 
-static HolyLog::Async g_fullLog;
-static std::atomic<DWORD> g_fullLogError{ERROR_SUCCESS};
-static void FullLog(const std::wstring& text) noexcept {
-    try {
-        SYSTEMTIME t{}; GetSystemTime(&t); wchar_t stamp[100]{};
-        swprintf_s(stamp, L"%04u-%02u-%02uT%02u:%02u:%02u.%03uZ tid=%lu ",
-            t.wYear,t.wMonth,t.wDay,t.wHour,t.wMinute,t.wSecond,t.wMilliseconds,GetCurrentThreadId());
-        g_fullLog.Submit(std::wstring(stamp) + text);
-    } catch (...) { g_fullLogError.store(ERROR_NOT_ENOUGH_MEMORY); }
-}
 struct DownloadItem {
     const wchar_t* name;
     const wchar_t* url;
@@ -303,10 +293,10 @@ static void StartWorker(int itemIndex, Work work, bool interactive = false) {
         if (!g_workers) g_workers = std::make_unique<HolyWorkers::Pool>(4);
         const bool queued = g_workers->Submit([itemIndex, work = std::move(work)]() {
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-            FullLog(L"WORK start item=" + std::to_wstring(itemIndex));
-            try { work(); FullLog(L"WORK return item=" + std::to_wstring(itemIndex)); }
+            (void)0;
+            try { work(); (void)0; }
             catch (...) {
-                FullLog(L"WORK exception item=" + std::to_wstring(itemIndex));
+                (void)0;
                 // No exception may escape a std::thread and terminate the UI.
                 try {
                     if (itemIndex >= 0) {
@@ -326,7 +316,7 @@ static void StartWorker(int itemIndex, Work work, bool interactive = false) {
                 }
             }
         }, interactive);
-        FullLog(L"WORK queued=" + std::to_wstring(queued) + L" item=" + std::to_wstring(itemIndex));
+        (void)0;
         if (!queued) throw std::runtime_error("worker queue full");
     } catch (...) {
         if (itemIndex >= 0) MarkIdle(itemIndex);
@@ -342,7 +332,7 @@ static void RemoveDownloadStatus(int itemIndex) {
         InvalidateRect(g_mainWindow,nullptr,FALSE);
 }
 static void AddLog(const std::wstring& text,int itemIndex=-1,bool folderIcon=false,bool downloading=false) {
-    FullLog(L"UI_LOG " + text);
+    (void)0;
     std::lock_guard<std::mutex> lock(g_logMutex);
     if(itemIndex<0||static_cast<size_t>(itemIndex)>=kItemCount)itemIndex=-1;
     if(itemIndex>=0)HolyUi::RemoveDownloadRows(g_logLines,g_logViewport,itemIndex);

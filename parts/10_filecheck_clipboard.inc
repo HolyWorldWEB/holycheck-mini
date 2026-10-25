@@ -151,9 +151,7 @@ struct ScopedHashReads {
     ScopedHashReads& operator=(const ScopedHashReads&)=delete;
     ~ScopedHashReads(){
         g_hashReads=previous;
-        try { FullLog(L"VERIFY item="+std::to_wstring(item)+L" diskHashes="+std::to_wstring(diskReads)+
-            L" reused="+std::to_wstring(hits)+L" hashMs="+std::to_wstring(hashMs)+
-            L" operationMs="+std::to_wstring(GetTickCount64()-started)); } catch(...) {}
+        try { (void)0; } catch(...) {}
     }
 };
 static bool GetFileSha256Hex(const std::wstring& path,std::wstring& hex) {
@@ -190,7 +188,7 @@ static bool VerifyPinnedPayloadForItem(int itemIndex, const std::wstring& path,
         return false;
     }
     std::wstring expected;
-    if (!ExpectedPayloadHash(itemIndex, expected, error)) { FullLog(L"TRUST metadata item=" + std::to_wstring(itemIndex) + L" rejected: " + error); return false; }
+    if (!ExpectedPayloadHash(itemIndex, expected, error)) { (void)0; return false; }
 
     std::wstring actual;
     const auto hashStart=GetTickCount64();
@@ -200,7 +198,7 @@ static bool VerifyPinnedPayloadForItem(int itemIndex, const std::wstring& path,
         error = g_cancelRequested.load()?L"Операция отменена.":L"Не удалось вычислить SHA-256 загруженного файла.";
         return false;
     }
-    FullLog(L"SHA item=" + std::to_wstring(itemIndex) + L" expected=" + expected + L" actual=" + actual);
+    (void)0;
     if (_wcsicmp(actual.c_str(), expected.c_str()) != 0) {
         error = L"SHA-256 не совпадает с доверенным каталогом. Запуск заблокирован. Для обновляемого источника нужен актуальный подписанный манифест и настроенный доверенный ключ; для фиксированной версии — проверенный пакет/выпуск HolyCheck.";
         return false;

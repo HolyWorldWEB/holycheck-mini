@@ -36,7 +36,6 @@
 #include "parts/storage_layout.h"
 #include "parts/uninstall_policy.h"
 #include "parts/ui_layout.h"
-#include "parts/full_log.h"
 #include "parts/file_policy.h"
 #include "parts/url_policy.h"
 #include "parts/network_policy.h"

@@ -22,11 +22,11 @@ static bool ArchivePlan(int itemIndex, const HolyZip::Read& read, uint64_t size,
     }
     const auto root=destination.empty()?ItemExtractDirectory(itemIndex):destination;
     if(!HolyFiles::LocalPath(root)) {error=L"ZIP: недопустимый каталог распаковки.";return false;}
-    FullLog(L"ZIP parse item=" + std::to_wstring(itemIndex) + L" bytes=" + std::to_wstring(size));
+    (void)0;
     if (!HolyZip::Parse(read, size, entries)) {
         error = L"ZIP: недопустимые заголовки/пути либо неподдерживаемый формат."; return false;
     }
-    FullLog(L"ZIP entries=" + std::to_wstring(entries.size()));
+    (void)0;
     std::set<std::wstring> keys;
     for (const auto& entry : entries) {
         const int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, entry.name.data(),
@@ -74,10 +74,10 @@ static bool HashArchiveEntry(const HolyZip::Read& read, const HolyZip::Entry& en
 }
 // Reconstruct trust from the pinned archive, not a writable on-disk inventory.
 static bool LoadArchiveInventory(int itemIndex, std::wstring& error) {
-    const auto inventoryStarted=GetTickCount64();
+    [[maybe_unused]] const auto inventoryStarted=GetTickCount64();
     HandleSet locks; const auto path = ItemPath(itemIndex);
     const auto extractionRoot=ExtractPathKey(ItemExtractDirectory(itemIndex));
-    if (!LockRegularFile(path, locks) || !VerifyPinnedPayloadForItem(itemIndex, path, error)) { FullLog(L"ZIP inventory failed item=" + std::to_wstring(itemIndex) + L" code=" + std::to_wstring(GetLastError()) + L" reason=" + error); return false; }
+    if (!LockRegularFile(path, locks) || !VerifyPinnedPayloadForItem(itemIndex, path, error)) { (void)0; return false; }
     std::wstring expected;
     if (!ExpectedPayloadHash(itemIndex, expected, error)) return false;
     {
@@ -92,7 +92,7 @@ static bool LoadArchiveInventory(int itemIndex, std::wstring& error) {
     };
     std::vector<HolyZip::Entry> entries; std::vector<std::wstring> names;
     if (!ArchivePlan(itemIndex, read, static_cast<uint64_t>(size.QuadPart), entries, names, error)) return false;
-    std::vector<TrustedExtractedFile> files;uint64_t expandedBytes=0;
+    std::vector<TrustedExtractedFile> files;[[maybe_unused]] uint64_t expandedBytes=0;
     for (size_t i = 0; i < entries.size(); ++i) {
         if (g_cancelRequested.load()) { error = L"Операция отменена."; return false; }
         std::wstring hash;
@@ -100,8 +100,7 @@ static bool LoadArchiveInventory(int itemIndex, std::wstring& error) {
         if (!entries[i].directory) {files.push_back({names[i], hash});expandedBytes+=entries[i].size;}
     }
     if (files.empty()) { error = L"ZIP не содержит файлов."; return false; }
-    FullLog(L"ZIP inventory decoded item="+std::to_wstring(itemIndex)+L" totalMs="+
-        std::to_wstring(GetTickCount64()-inventoryStarted)+L" expandedBytes="+std::to_wstring(expandedBytes));
+    (void)0;
     std::lock_guard<std::mutex> guard(g_extractedMutex);
     g_extractedFiles[itemIndex] = std::move(files); g_inventoryArchiveHash[itemIndex] = expected;
     g_inventoryExtractionRoot[itemIndex]=extractionRoot;
@@ -182,7 +181,7 @@ static bool CollectTabExpected(int tab, HandleSet& locks, std::map<std::wstring,
         if (kItems[i].tab != tab || !FileExists(ItemPath(i))) continue;
         if (g_cancelRequested.load()) { error = L"Операция отменена."; return false; }
         const auto path = ItemPath(i);
-        if (!LockRegularFile(path, locks) || !VerifyPinnedPayloadForItem(i, path, error)) { FullLog(std::wstring(L"TAB payload rejected item=") + kItems[i].name + L" reason=" + error); if (error.empty()) error=L"Недоступен файл загрузки: " + HolyInstalled::Leaf(path); return false; }
+        if (!LockRegularFile(path, locks) || !VerifyPinnedPayloadForItem(i, path, error)) { (void)0; if (error.empty()) error=L"Недоступен файл загрузки: " + HolyInstalled::Leaf(path); return false; }
         downloaded.insert(ExtractPathKey(path));
         std::wstring filename(kItems[i].file);
         if (HolyStorage::ArchiveFolderName(filename).empty()) continue;
@@ -235,7 +234,7 @@ struct ExtractRollback {
 };
 static bool ExtractVerifiedZip(int itemIndex, const std::wstring& zipPath,
                                const std::wstring& destination, std::wstring& error) {
-    const auto extractionStarted=GetTickCount64();
+    [[maybe_unused]] const auto extractionStarted=GetTickCount64();
     if (destination != ItemExtractDirectory(itemIndex) || destination == ItemDirectory(itemIndex) || zipPath != ItemPath(itemIndex)) {
         error=L"ZIP: распаковка разрешена только в отдельную папку рядом с архивом.";return false;
     }
@@ -283,7 +282,7 @@ static bool ExtractVerifiedZip(int itemIndex, const std::wstring& zipPath,
                    WriteFile(out, data, static_cast<DWORD>(n), &written, nullptr) && written == n;
         }) || !FlushFileBuffers(out)) { error = L"ZIP: ошибка записи/CRC или операция отменена."; return false; }
     }
-    FullLog(L"ZIP extraction committed item=" + std::to_wstring(itemIndex) + L" newFiles=" + std::to_wstring(rollback.created.size())+L" totalMs="+std::to_wstring(GetTickCount64()-extractionStarted));
+    (void)0;
     rollback.committed = true; error.clear(); return true;
 }
 static bool CheckExtractedInventory(const std::wstring& directory, const std::map<std::wstring, std::wstring>& expected,
@@ -311,9 +310,9 @@ static bool CheckExtractedInventory(const std::wstring& directory, const std::ma
             if (known == expected.end() && !HolyFiles::ExecutionArtifact(path)) continue;
             if (known == expected.end() || !LockRegularFile(path, locks) || !GetFileSha256Hex(path, actual) || actual != known->second) {
                 if(g_cancelRequested.load()){error=L"Операция отменена.";ok=false;break;}
-                const DWORD code=GetLastError();
+                [[maybe_unused]] const DWORD code=GetLastError();
                 error = L"В общей папке вкладки обнаружен посторонний, недоступный или изменённый файл: " + HolyInstalled::Leaf(path) + L". Запуск заблокирован.";
-                FullLog(L"TAB reject leaf=" + HolyInstalled::Leaf(path) + L" known=" + std::to_wstring(known!=expected.end()) + L" win32=" + std::to_wstring(code));
+                (void)0;
                 ok = false; break;
             }
         }
@@ -335,7 +334,7 @@ static bool LockVerifiedExtractedTree(int itemIndex, const std::wstring& launchP
         std::wstring actual;
         if (!LockRegularFile(f.path, locks) || !GetFileSha256Hex(f.path, actual) || actual != f.sha256) {
             if(g_cancelRequested.load()){error=L"Операция отменена.";return false;}
-            error = L"Распакованный файл программы изменён, недоступен или отсутствует: " + HolyInstalled::Leaf(f.path); FullLog(L"ZIP own file rejected: " + error); return false;
+            error = L"Распакованный файл программы изменён, недоступен или отсутствует: " + HolyInstalled::Leaf(f.path); (void)0; return false;
         }
         alreadyVerified.insert(ExtractPathKey(f.path));
         if (_wcsicmp(f.path.c_str(), launchPath.c_str()) == 0) found = true;

@@ -115,7 +115,7 @@ static bool ExpectedPayloadHash(int itemIndex, std::wstring& expected, std::wstr
         }
         // Undeployed builds retain ONLY exact original pins, never learn hashes.
         static bool warned = false;
-        if (!warned) { FullLog(L"UPDATES not deployed: exact baseline pins only"); warned = true; }
+        if (!warned) { (void)0; warned = true; }
         return true;
     }
     struct MetadataCache { std::vector<BYTE> bytes; ULONGLONG fetched = 0; };
@@ -183,7 +183,7 @@ static bool ExpectedPayloadHash(int itemIndex, std::wstring& expected, std::wstr
     }
     if (fetchedRemote) {
         cache.bytes = std::move(bytes); cache.fetched = GetTickCount64();
-        FullLog(L"UPDATES verified sequence=" + std::to_wstring(doc.sequence));
+        (void)0;
     }
     return true;
 }

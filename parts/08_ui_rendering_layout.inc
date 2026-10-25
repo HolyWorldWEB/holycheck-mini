@@ -4349,7 +4349,7 @@ static void RecordPaintTiming(double renderMs) {
         wchar_t text[240]{};
         swprintf_s(text, L"HolyCheck paint FPS=%.1f maxGap=%.1fms moveSize=%d renderAvg=%.2fms renderMax=%.2fms waitable=%d\n",
             frames / seconds, maxGap, g_inSizeMove ? 1 : 0, renderTotal / frames, renderMax, g_frameClock.Healthy() ? 1 : 0);
-        FullLog(text); // One aggregate every five seconds, not disk I/O per frame.
+        (void)0; // One aggregate every five seconds, not disk I/O per frame.
 #ifdef HOLYCHECK_FRAME_DIAGNOSTICS
         OutputDebugStringW(text);
 #endif
@@ -4518,7 +4518,7 @@ void LayoutControls(HWND hwnd) {
 
 static void RequestCancelAll() {
     if (g_closeWhenIdle || g_cancelUiActive) return;
-    FullLog(L"CANCEL requested");
+    (void)0;
     g_cancelUiActive = true;
     g_cancelRequested.store(true);
     SetWindowTextW(g_cancelAll, L"Отмена…");
@@ -4534,7 +4534,7 @@ static void FinishCancellationIfIdle() {
     if (busy || (g_workers && g_workers->Outstanding())) return;
     // Every old result is consumed and every queued/running task has exited.
     RemoveDownloadStatus(-1); // Cancel remains silent; no stale "downloading" rows.
-    FullLog(L"CANCEL all queued/running work settled");
+    (void)0;
     g_cancelRequested.store(false); g_cancelUiActive = false;
     SetWindowTextW(g_cancelAll, L"Отмена"); EnableWindow(g_cancelAll, TRUE);
     EnableWindow(g_downloadAll,TRUE); EnableWindow(g_deleteAll, TRUE);
@@ -4574,8 +4574,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         GetClientRect(hwnd, &rc);
         InitParticles(static_cast<int>(rc.right), static_cast<int>(rc.bottom));
         LayoutControls(hwnd);
-        const bool clockReady = g_frameClock.Start(hwnd, WM_APP_FRAME);
-        FullLog(L"FRAME clock ready=" + std::to_wstring(clockReady) + L" highResolution=" + std::to_wstring(clockReady && g_frameClock.HighResolution()));
+        [[maybe_unused]] const bool clockReady = g_frameClock.Start(hwnd, WM_APP_FRAME);
+        (void)0;
         SetTimer(hwnd, TIMER_MAINTENANCE, 100, nullptr); // cancellation/close work even when inactive
         return 0;
     }
@@ -4600,12 +4600,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         return 0;
 
     case WM_ENTERSIZEMOVE:
-        FullLog(L"WINDOW move/size enter");
+        (void)0;
         g_inSizeMove = true;
         ScheduleFrame(hwnd, true);
         return 0;
     case WM_EXITSIZEMOVE:
-        FullLog(L"WINDOW move/size exit");
+        (void)0;
         g_inSizeMove = false;
         if (g_layoutPending) { g_layoutPending = false; LayoutControls(hwnd); }
         ScheduleFrame(hwnd, true);
@@ -4618,17 +4618,13 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
         }
         g_frameClock.Acknowledge();
         if (!g_frameClock.Healthy()) {
-            FullLog(L"FRAME waitable clock failed; bounded WM_TIMER fallback");
+            (void)0;
             ScheduleFrame(hwnd);
         }
         return 0;
 
     case WM_TIMER:
         FinishCancellationIfIdle();
-        { static bool warned=false;
-          if (!warned && (g_fullLog.Failed() || g_fullLogError.load() != ERROR_SUCCESS)) {
-              warned=true; SetWindowTextW(hwnd,L"HolyCheck — ошибка записи holycheckfull.txt");
-          } }
         if (wParam == TIMER_PARTICLES) {
             if (g_layoutPending) { g_layoutPending = false; LayoutControls(hwnd); }
             UpdateParticles(hwnd);
@@ -4785,7 +4781,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
                                        : L"HolyCheck: папка не удалена полностью",-1,result->folderRemoved);
             }
             if (!result->localOk && !result->localSkipped) {
-                const auto text=result->localError.empty()?L"Папка HolyCheck не удалена полностью. Подробности: Загрузки\\holycheckfull.txt.":result->localError;
+                const auto text=result->localError.empty()?L"Папка HolyCheck не удалена полностью.":result->localError;
                 MessageBoxW(hwnd,text.c_str(),L"HolyCheck",MB_OK|MB_ICONWARNING);
             }
         }

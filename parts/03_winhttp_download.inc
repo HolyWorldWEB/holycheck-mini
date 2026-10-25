@@ -12,7 +12,7 @@ struct WorkerHttpSession {
             const auto code=GetLastError();WinHttpCloseHandle(handle);handle=nullptr;
             error=L"Не удалось настроить таймауты: "+Win32ErrorText(code);return nullptr;
         }
-        FullLog(L"HTTP worker session initialized");return handle;
+        (void)0;return handle;
     }
 };
 static thread_local WorkerHttpSession g_workerHttpSession;
@@ -63,9 +63,9 @@ struct PartialDownloadScope {
     ~PartialDownloadScope() noexcept {
         try {
             if(owned&&!committed&&(!IsOwnHolyCheckDirectory(g_appDir)||!identity.Remove(g_appDir))) {
-                retry.retryable=false;FullLog(L"HTTP partial rollback failed; further attempts suppressed");
+                retry.retryable=false;(void)0;
             }
-        }catch(...){retry.retryable=false;FullLog(L"HTTP partial rollback exception; further attempts suppressed");}
+        }catch(...){retry.retryable=false;(void)0;}
     }
 };
 
@@ -139,7 +139,7 @@ static bool FetchSignedUpdateManifest(std::vector<BYTE>& bytes, std::wstring& er
             !WinHttpSetOption(request, WINHTTP_OPTION_DISABLE_FEATURE, &disable, sizeof(disable)) ||
             !WinHttpSendRequest(request, L"Cache-Control: no-cache\r\n", static_cast<DWORD>(-1),
                 WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(request, nullptr)) {
-            FullLog(L"UPDATES transport failed code=" + std::to_wstring(GetLastError()));
+            (void)0;
             error = L"Не удалось получить подписанный каталог обновлений. Загрузка не разрешена."; return false;
         }
         std::wstring effective;
@@ -151,7 +151,7 @@ static bool FetchSignedUpdateManifest(std::vector<BYTE>& bytes, std::wstring& er
             WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX)) {
             error = L"Недоступен HTTP-статус каталога обновлений."; return false;
         }
-        FullLog(L"UPDATES HTTP status=" + std::to_wstring(status) + L" hop=" + std::to_wstring(hop));
+        (void)0;
         if (status == 200) {
             unsigned char chunk[16384];
             const bool ok = HolyManifest::ReadBounded([&](unsigned char* out, size_t capacity, size_t& got) {
@@ -200,7 +200,7 @@ static bool PublishOpenDownload(HANDLE file,const std::wstring& destination) {
 static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const std::wstring& finalPath,
                        const std::wstring& expectedFileName,std::wstring& error,
                        ULONGLONG deadline,HolyNet::RetryState& retry) {
-    const auto attemptStart=GetTickCount64();
+    [[maybe_unused]] const auto attemptStart=GetTickCount64();
     auto cancelled = [&] { return g_cancelRequested.load() || GetTickCount64() >= deadline; };
     constexpr unsigned long long kMaxDownloadBytes = 2ULL * 1024ULL * 1024ULL * 1024ULL;
     if (!HasPinnedSha256(itemIndex) || finalPath != ItemPath(itemIndex) ||
@@ -209,10 +209,10 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
     if (!LockDirectoryChain(ItemDirectory(itemIndex), directoryLocks)) {
         error = L"Небезопасная папка загрузки."; return false;
     }
-    const auto sessionStart=GetTickCount64();
+    [[maybe_unused]] const auto sessionStart=GetTickCount64();
     HINTERNET session=g_workerHttpSession.Get(error);
     if(!session)return false;
-    FullLog(L"HTTP sessionMs="+std::to_wstring(GetTickCount64()-sessionStart));
+    (void)0;
     HINTERNET connect=nullptr,request=nullptr;
     InternetScope internet{connect,request};
     bool ready = false, ok = false, ownsPart = false;
@@ -221,7 +221,7 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
         if (cancelled()) { error = L"Загрузка отменена или превышено время операции."; break; }
         URL_COMPONENTS c{}; std::wstring host, path;
         if (!ParseApprovedUrl(current, c, host, path)) { error = L"Небезопасный URL заблокирован."; break; }
-        FullLog(L"HTTP item=" + std::to_wstring(itemIndex) + L" hop=" + std::to_wstring(hop) + L" host=" + LowerAscii(host));
+        (void)0;
         if (request) { WinHttpCloseHandle(request); request = nullptr; }
         if (connect) { WinHttpCloseHandle(connect); connect = nullptr; }
         connect = WinHttpConnect(session, host.c_str(), c.nPort, 0);
@@ -235,14 +235,14 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
             !WinHttpSetOption(request, WINHTTP_OPTION_AUTOLOGON_POLICY, &auth, sizeof(auth))) {
             error = L"Не удалось включить безопасную политику WinHTTP."; break;
         }
-        const auto headersStart=GetTickCount64();
+        [[maybe_unused]] const auto headersStart=GetTickCount64();
         if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
             !WinHttpReceiveResponse(request, nullptr)) {
             const auto code=GetLastError();retry.retryable=RetryableTransportError(code);
-            FullLog(L"HTTP headers failed code="+std::to_wstring(code)+L" elapsedMs="+std::to_wstring(GetTickCount64()-headersStart));
+            (void)0;
             error=L"WinHTTP: "+Win32ErrorText(code);break;
         }
-        FullLog(L"HTTP headersMs="+std::to_wstring(GetTickCount64()-headersStart));
+        (void)0;
         std::wstring effective;
         if (!QueryVerifiedRequestUrl(request, effective)) {
             error = L"Не удалось проверить итоговый URL. Загрузка заблокирована."; break;
@@ -252,7 +252,7 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
                                  WINHTTP_HEADER_NAME_BY_INDEX, &status, &bytes, WINHTTP_NO_HEADER_INDEX)) {
             error = L"Не удалось получить HTTP-статус."; break;
         }
-        FullLog(L"HTTP status=" + std::to_wstring(status) + L" finalURLverified=1");
+        (void)0;
         if (status == 200) { ready = true; break; }
         if (hop == 10 || (status != 301 && status != 302 && status != 303 && status != 307 && status != 308)) {
             retry.retryable=HolyNet::RetryStatus(status)&&ReadRetryAfter(request,retry.delayMs);
@@ -312,7 +312,7 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
         int lastPercent = -1;
         std::vector<unsigned char> buffer(64 * 1024);
 
-        const auto readStart=GetTickCount64();
+        [[maybe_unused]] const auto readStart=GetTickCount64();
         for (;;) {
             if(cancelled()){streamOk=false;error=L"Загрузка отменена или превышено время операции.";break;}
             DWORD read=0;
@@ -337,7 +337,7 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
                     static_cast<WPARAM>(itemIndex),static_cast<LPARAM>(percent));}
             }
         }
-        FullLog(L"HTTP readMs="+std::to_wstring(GetTickCount64()-readStart)+L" bytes="+std::to_wstring(receivedTotal));
+        (void)0;
 
         if (streamOk && !FlushFileBuffers(file)) {
             streamOk = false;
@@ -346,7 +346,7 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
         // Retain the original exclusive CREATE_NEW handle through verification
         // and rename. No check-to-path-replacement gap and no extra rehash.
         if (!streamOk) break;
-        FullLog(L"HTTP receivedBytes=" + std::to_wstring(receivedTotal) + L" declared=" + std::to_wstring(totalBytes));
+        (void)0;
         if(totalBytes&&receivedTotal!=totalBytes) {
             retry.retryable=receivedTotal<totalBytes;error=L"Неполное тело HTTP-ответа.";break;
         }
@@ -356,14 +356,14 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
             error=L"Сервер вернул файл неожиданного формата.";break;
         }
 
-        const auto verifyStart=GetTickCount64();
+        [[maybe_unused]] const auto verifyStart=GetTickCount64();
         const bool verified=VerifyPinnedPayloadForItem(itemIndex,partPath,error,file);
-        FullLog(L"HTTP verifyMs="+std::to_wstring(GetTickCount64()-verifyStart)+L" ok="+std::to_wstring(verified));
+        (void)0;
         if(!verified)break; // Never retry/accept a new hash to mask trust failure.
 
-        const auto publishWait=GetTickCount64();
+        [[maybe_unused]] const auto publishWait=GetTickCount64();
         std::unique_lock<std::recursive_mutex> publishGuard(g_tabFileMutex[kItems[itemIndex].tab]);
-        FullLog(L"PUBLISH item="+std::to_wstring(itemIndex)+L" waitMs="+std::to_wstring(GetTickCount64()-publishWait));
+        (void)0;
         if(cancelled()){error=L"Операция отменена до сохранения файла.";break;}
         if (!PublishOpenDownload(file,finalPath)) {
             error = L"Не удалось сохранить файл: " + Win32ErrorText(GetLastError());
@@ -375,8 +375,8 @@ static bool DownloadHttpsFileAttempt(int itemIndex,const std::wstring& url,const
         ok = true;
     } while (false);
 
-    FullLog(L"HTTP attemptMs="+std::to_wstring(GetTickCount64()-attemptStart));
-    FullLog(L"HTTP completed item=" + std::to_wstring(itemIndex) + L" ok=" + std::to_wstring(ok) + L" reason=" + error);
+    (void)0;
+    (void)0;
     return ok;
 }
 
@@ -396,13 +396,13 @@ bool DownloadHttpsFile(int itemIndex,const std::wstring& url,const std::wstring&
     const auto stopped=[] {return g_cancelRequested.load();};
     const bool ok=HolyNet::Run([&](unsigned attempt,HolyNet::RetryState& retry) {
         error.clear();
-        FullLog(L"HTTP attempt="+std::to_wstring(attempt+1)+L" max=3 item="+std::to_wstring(itemIndex));
+        (void)0;
         if(attempt)PostMessageW(g_mainWindow,WM_APP_DOWNLOAD_PROGRESS,static_cast<WPARAM>(itemIndex),0);
         const bool success=DownloadHttpsFileAttempt(itemIndex,url,finalPath,expectedFileName,error,deadline,retry);
-        FullLog(L"HTTP retryable="+std::to_wstring(retry.retryable)+L" retryAfterMs="+std::to_wstring(retry.delayMs));
+        (void)0;
         return success;
     },[]{return GetTickCount64();},[&](unsigned delay) {
-        FullLog(L"HTTP retry waitMs="+std::to_wstring(delay)+L" item="+std::to_wstring(itemIndex));
+        (void)0;
         const auto until=GetTickCount64()+delay;
         for(;;) {
             const auto now=GetTickCount64();
@@ -416,6 +416,6 @@ bool DownloadHttpsFile(int itemIndex,const std::wstring& url,const std::wstring&
         if(stopped())error=L"Загрузка отменена.";
         else if(GetTickCount64()>=deadline)error=L"Превышено общее время загрузки (15 минут).";
     }
-    FullLog(L"HTTP totalMs="+std::to_wstring(GetTickCount64()-started)+L" ok="+std::to_wstring(ok));
+    (void)0;
     return ok;
 }

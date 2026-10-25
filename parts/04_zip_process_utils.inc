@@ -26,7 +26,7 @@ static void CleanupExitedTrackedProcesses() {
     std::lock_guard<std::mutex> lock(g_processMutex);
     for (size_t i = 0; i < g_launchedProcesses.size();) {
         if (!IsProcessStillRunning(g_launchedProcesses[i].process)) {
-            FullLog(L"PROCESS release exited tracked item="+std::to_wstring(g_launchedProcesses[i].itemIndex)+L" pid="+std::to_wstring(g_launchedProcesses[i].pid));
+            (void)0;
             if (g_launchedProcesses[i].process) CloseHandle(g_launchedProcesses[i].process);
             g_launchedProcesses.erase(g_launchedProcesses.begin() + i);
         } else {
@@ -197,7 +197,7 @@ static bool OpenTrackedPath(int itemIndex, const std::wstring& path, std::wstrin
         return false;
     }
 
-    FullLog(L"LAUNCH success item=" + std::to_wstring(itemIndex) + L" exe=" + HolyInstalled::Leaf(path));
+    (void)0;
     {std::lock_guard<std::mutex> guard(g_processMutex);
      g_approvedLaunchTargets[static_cast<size_t>(itemIndex)]=std::move(approved);}
     if (sei.hProcess) TrackLaunchedProcess(itemIndex, path, sei.hProcess);
@@ -921,12 +921,12 @@ static void CollectRegisteredUninstallCommands(InstalledProductDisplayMatcher ma
         for (const REGSAM view : { REGSAM(KEY_WOW64_64KEY), REGSAM(KEY_WOW64_32KEY) }) {
             HKEY uninstall = nullptr;
             const LONG opened = RegOpenKeyExW(root,L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall",0,KEY_READ|view,&uninstall);
-            FullLog(L"ARP root=" + std::wstring(root==HKEY_LOCAL_MACHINE?L"HKLM":L"HKCU") + L" view=" + std::to_wstring(view) + L" open=" + std::to_wstring(opened));
+            (void)0;
             if (opened != ERROR_SUCCESS) continue;
             for (DWORD index = 0; !g_cancelRequested.load(); ++index) {
                 wchar_t name[512]{}; DWORD chars = ARRAYSIZE(name);
                 const LONG enumerated=RegEnumKeyExW(uninstall,index,name,&chars,nullptr,nullptr,nullptr,nullptr);
-                if (enumerated!=ERROR_SUCCESS) { if (enumerated!=ERROR_NO_MORE_ITEMS) FullLog(L"ARP enumerate error="+std::to_wstring(enumerated)); break; }
+                if (enumerated!=ERROR_SUCCESS) { if (enumerated!=ERROR_NO_MORE_ITEMS) (void)0; break; }
                 HKEY item = nullptr;
                 if (RegOpenKeyExW(uninstall, name, 0, KEY_READ | view, &item) != ERROR_SUCCESS) continue;
                 std::wstring display;
@@ -938,11 +938,10 @@ static void CollectRegisteredUninstallCommands(InstalledProductDisplayMatcher ma
                     else for (const auto* field : { L"UninstallString", L"QuietUninstallString" }) {
                         std::wstring command;
                         DWORD type=0, bytes=0;
-                        const LONG queried=RegQueryValueExW(item,field,nullptr,&type,nullptr,&bytes);
+                        [[maybe_unused]] const LONG queried=RegQueryValueExW(item,field,nullptr,&type,nullptr,&bytes);
                         const bool read=ReadRegistryStringValue(item,field,command);
                         // Never record raw registry commands (may contain private data).
-                        FullLog(std::wstring(L"ARP match field=") + field + L" status=" + std::to_wstring(queried) +
-                            L" type=" + std::to_wstring(type) + L" bytes=" + std::to_wstring(bytes) + L" parsed=" + std::to_wstring(read));
+                        (void)0;
                         if (read && std::find(commands.begin(),commands.end(),command)==commands.end()) commands.push_back(command);
                     }
                 }
@@ -1168,8 +1167,7 @@ static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
                     INSTALLPROPERTY_INSTALLEDPRODUCTNAME, out, &n);
                 count = n; return static_cast<unsigned>(code);
             }, name, queryError);
-            FullLog(L"MSI installed identity context=" + std::to_wstring(static_cast<unsigned>(context)) +
-                L" status=" + std::to_wstring(queryError) + L" read=" + std::to_wstring(readName) + L" matches=" + std::to_wstring(readName && matcher(name)));
+            (void)0;
             if (readName && matcher(name)) { confirmed = true; machineMsi = context == MSIINSTALLCONTEXT_MACHINE; break; }
             if (readName) otherProduct = true;
         }
@@ -1218,8 +1216,7 @@ static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
             error=L"Неподдерживаемые параметры окна удаления.";return false;
         }
     }
-    FullLog(std::wstring(L"UNINSTALL validated arguments product=") + displayLabel +
-        L" exe=" + exeName + L" visibleSI=" + std::to_wstring(!msi && std::wstring(displayLabel)==L"System Informer") + L" MSI=" + std::to_wstring(msi) + L" machine=" + std::to_wstring(machineMsi));
+    (void)0;
     HandleSet locks;
     if (!LockRegularFile(executable, locks)) {
         error = L"Не удалось защитить EXE деинсталлятора от подмены."; return false;
@@ -1232,7 +1229,7 @@ static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
         std::set<std::wstring> payloads;
         if(item<0 || !CollectTabExpected(kItems[item].tab,locks,expected,payloads,error) ||
             !CheckExtractedInventory(ItemDirectory(item),expected,payloads,locks,error)) {
-            FullLog(L"UNINSTALL SI external namespace rejected: "+error);return false;
+            (void)0;return false;
         }
     }
     const auto parentPath = executable.substr(0, executable.find_last_of(L'\\'));
@@ -1256,10 +1253,10 @@ static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
     // second registry command and prompt/execute again.
     started = true;
     if (g_cancelRequested.load()) { error = L"Операция отменена до запуска."; return false; }
-    FullLog(std::wstring(L"UNINSTALL launch product=") + displayLabel + L" exe=" + exeName + L" verb=" + sei.lpVerb);
+    (void)0;
     if (!ShellExecuteExW(&sei)) {
         DWORD code = GetLastError();
-        FullLog(L"UNINSTALL ShellExecute error=" + std::to_wstring(code));
+        (void)0;
         if (code == ERROR_ELEVATION_REQUIRED) {
             if (g_cancelRequested.load()) { error = L"Удаление отменено до UAC."; return false; }
             sei.lpVerb = L"runas"; // Native UAC, only for an already validated target.
@@ -1287,7 +1284,7 @@ static bool LaunchRegisteredCommandNoWait(const wchar_t* displayLabel,
     }
     DWORD code = 0;
     const bool gotExit = GetExitCodeProcess(sei.hProcess, &code) != FALSE;
-    FullLog(std::wstring(L"UNINSTALL process exited product=") + displayLabel + L" gotCode=" + std::to_wstring(gotExit) + L" code=" + std::to_wstring(code));
+    (void)0;
     if (!gotExit ||
         (code != 0 && !(msi && (code == 3010 || code == 1641)))) {
         error = L"Деинсталлятор завершился с ошибкой (код " + std::to_wstring(code) + L").";
@@ -1371,7 +1368,7 @@ static bool PrepareSiRecoveryCommand(const std::wstring& installed,std::wstring&
     if(FileExists(setup)) {
         if(!IsExactPinnedInstaller(item,setup)){error=L"Имеющийся setup System Informer не совпадает с доверенным SHA-256. Файл сохранён; восстановительное удаление не запущено.";return false;}
     } else {
-        FullLog(L"UNINSTALL SI recovery: fetching exact SHA-pinned vendor setup for C:\\Program Files\\SystemInformer");
+        (void)0;
         if(!DownloadHttpsFile(item,kItems[item].url,setup,kItems[item].file,error))return false;
     }
     // Recheck the target after the network wait, before authorising execution.
@@ -1386,8 +1383,7 @@ static bool LaunchRegisteredProductUninstallerNoWait(const wchar_t* label,
     } status(label);
     std::vector<std::wstring> commands;
     CollectRegisteredUninstallCommands(matcher, commands);
-    FullLog(std::wstring(L"UNINSTALL discover product=") + label + L" installedExe=" + FileNameOnly(installed) +
-        L" registryCommands=" + std::to_wstring(commands.size()));
+    (void)0;
     if (matcher==SystemInformerDisplayName && HolyInstalled::StandardSystemInformerLocation(installed)) {
         // Do NOT first execute the in-tree copy: v5 logs show it removes ARP
         // registration but leaves the main EXE. Use the same external pinned
@@ -1395,9 +1391,9 @@ static bool LaunchRegisteredProductUninstallerNoWait(const wchar_t* label,
         // This is one selected command, not a retry after a wizard/UAC was run.
         std::wstring external;
         if(!PrepareSiRecoveryCommand(installed,external,error)) {
-            FullLog(L"UNINSTALL SI external setup refused before launch: "+error);return false;
+            (void)0;return false;
         }
-        FullLog(L"UNINSTALL SI selected external verified setup before first launch; registryCandidates="+std::to_wstring(commands.size()));
+        (void)0;
         commands.assign(1,external);
     }
     if (commands.empty() && matcher == SystemInformerDisplayName && !installed.empty()) {
@@ -1411,14 +1407,14 @@ static bool LaunchRegisteredProductUninstallerNoWait(const wchar_t* label,
             const auto setup = JoinPath(root,L"systeminformer-setup.exe");
             if (FileExists(setup)) commands.push_back(L"\"" + setup + L"\" " + HolyUninstall::SystemInformerArguments());
         }
-        FullLog(L"UNINSTALL SI local setup candidates=" + std::to_wstring(commands.size()));
+        (void)0;
     }
     if(commands.empty() && matcher==SystemInformerDisplayName && !installed.empty()) {
         std::wstring recovery;
         if(PrepareSiRecoveryCommand(installed,recovery,error))commands.push_back(recovery);
-        else {FullLog(L"UNINSTALL SI recovery refused: "+error);return false;}
+        else {(void)0;return false;}
     }
-    if (commands.empty()) { error = L"Не найдены читаемая команда удаления и локальный штатный деинсталлятор. Подробности: Загрузки\\holycheckfull.txt. Восстановите установку проверенным пакетом или используйте Параметры Windows → Приложения."; return false; }
+    if (commands.empty()) { error = L"Не найдены читаемая команда удаления и локальный штатный деинсталлятор. Восстановите установку проверенным пакетом или используйте Параметры Windows → Приложения."; return false; }
     for (const auto& command : commands) {
         if (g_cancelRequested.load()) { error = L"Удаление отменено."; return false; }
         bool started = false;
@@ -1446,20 +1442,18 @@ static bool LaunchRegisteredProductUninstallerNoWait(const wchar_t* label,
                         (observation.filePresent?4u:0u)|(observation.fileReadable?8u:0u);
                     if (flags!=lastObservation) {
                         lastObservation=flags;
-                        FullLog(std::wstring(L"UNINSTALL observe product=") + label + L" registered=" + std::to_wstring(observation.registered) +
-                            L" registryReadable=" + std::to_wstring(observation.registryReadable) + L" filePresent=" + std::to_wstring(observation.filePresent) +
-                            L" fileReadable=" + std::to_wstring(observation.fileReadable));
+                        (void)0;
                     }
                     return observation;
                 }, [] { return g_cancelRequested.load(); }, [](unsigned ms) { Sleep(ms); });
-            FullLog(std::wstring(L"UNINSTALL removal observation product=") + label + L" outcome=" + std::to_wstring(static_cast<int>(outcome)));
+            (void)0;
             if (outcome == HolyUninstall::Removal::Complete) return true;
             error = outcome == HolyUninstall::Removal::Cancelled
                 ? L"Ожидание удаления отменено. Окно деинсталлятора может продолжать работу; файлы HolyCheck сохранены."
                 : L"За 10 минут после выхода стартового процесса удаление не подтверждено. Завершите Uninstall в окне программы; если требуется, перезагрузите Windows. Файлы HolyCheck сохранены.";
             return false;
         }
-        FullLog(std::wstring(L"UNINSTALL rejected/failed product=") + label + L" started=" + std::to_wstring(started) + L" reason=" + error);
+        (void)0;
         if (started) return false; // Never invoke a second uninstaller after a launch.
     }
     return false;
@@ -1673,11 +1667,11 @@ static std::wstring FindBestExtractedExecutable(int itemIndex, const std::wstrin
         const int score = ExecutableCandidateScore(itemIndex, f.path);
         if (score > bestScore) { best = f.path; bestScore = score; }
     }
-    FullLog(L"ZIP candidate item=" + std::to_wstring(itemIndex) + L" inventory=" + std::to_wstring(own.size()) + L" exe=" + FileNameOnly(best));
+    (void)0;
     if (best.empty()) { error = L"Проверенный архив не содержит доступного EXE этой программы."; return {}; }
     if (!SetCachedLaunchPath(itemIndex, best, error)) {
         if (error.empty()) error = L"EXE найден, но проверка распакованной программы не пройдена.";
-        FullLog(L"ZIP candidate rejected: " + error); return {};
+        (void)0; return {};
     }
     return best;
 }

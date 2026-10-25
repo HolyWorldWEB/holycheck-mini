@@ -19,16 +19,16 @@ struct FolderDeletePlan {
 static bool FolderFailure(std::wstring& error,const std::wstring& path,DWORD code) {
     if(!code)code=ERROR_GEN_FAILURE;
     // Log only the leaf, not the user's full profile path.
-    FullLog(L"FOLDER cleanup blocked leaf="+HolyInstalled::Leaf(path)+L" code="+std::to_wstring(code));
+    (void)0;
     std::wstring hint;
     if(code==ERROR_DIR_NOT_EMPTY)
         hint=L" Windows ещё видит содержимое папки: удаление может ожидать освобождения файлов либо в папке появились новые данные. Новые объекты повторно не удалялись.";
     else if(code==ERROR_SHARING_VIOLATION||code==ERROR_LOCK_VIOLATION)
         hint=L" Объект занят. Завершите работу использующей его программы и повторите.";
     else if(code==ERROR_ACCESS_DENIED)
-        hint=L" Доступ запрещён либо путь не прошёл проверку безопасности. Проверьте права и журнал.";
+        hint=L" Доступ запрещён либо путь не прошёл проверку безопасности. Проверьте права доступа.";
     error=L"Папка HolyCheck не удалена полностью. Объект: "+HolyInstalled::Leaf(path)+
-        L". "+Win32ErrorText(code)+hint+L" Подробности: Загрузки\\holycheckfull.txt.";
+        L". "+Win32ErrorText(code)+hint+L"";
     SetLastError(code);return false;
 }
 static bool AddFolderDeleteNode(const std::wstring& root,const std::wstring& path,
@@ -109,7 +109,7 @@ static bool FolderResourcesIdle(const FolderDeletePlan& plan,std::wstring& error
     const DWORD blockingReboot=reboot&~static_cast<DWORD>(RmRebootReasonDetectedSelf);
     if(otherProcesses||blockingReboot) {
         error=L"Файлы HolyCheck ещё используются программой или службой. Закройте её и повторите удаление. Папка пока не изменена.";
-        FullLog(L"FOLDER resources in use processes="+std::to_wstring(otherProcesses)+L" reboot="+std::to_wstring(reboot));
+        (void)0;
         SetLastError(ERROR_SHARING_VIOLATION);return false;
     }
     return true;
@@ -138,7 +138,7 @@ static bool ConfirmFolderAbsent(const std::wstring& root,HolyFiles::DeleteRetryB
         return ERROR_DIR_NOT_EMPTY;
     },[]{return g_cancelRequested.load();},WaitFolderRetry,budget);
     if(code)return FolderFailure(error,root,code);
-    FullLog(L"FOLDER root absence confirmed");return true;
+    (void)0;return true;
 }
 static bool CommitFolderDeletePlan(FolderDeletePlan& plan,std::wstring& error) {
     if(plan.nodes.empty())return FolderFailure(error,L"HolyCheck",ERROR_INVALID_DATA);
@@ -163,18 +163,17 @@ static bool CommitFolderDeletePlan(FolderDeletePlan& plan,std::wstring& error) {
             if(SetFileInformationByHandle(it->handle,FileDispositionInfo,&disposition,sizeof(disposition)))return ERROR_SUCCESS;
             const DWORD why=GetLastError();
             if(attempts==1&&HolyFiles::RetryableDisposition(why))
-                FullLog(L"FOLDER retry transient deletion leaf="+HolyInstalled::Leaf(it->path)+L" code="+std::to_wstring(why));
+                (void)0;
             return why;
         },[]{return g_cancelRequested.load();},WaitFolderRetry,budget);
         if(code) {
             if(wasReadonly) { FILE_BASIC_INFO restore=original;
                 if(!SetFileInformationByHandle(it->handle,FileBasicInfo,&restore,sizeof(restore)))
-                    FullLog(L"FOLDER could not restore readonly flag code="+std::to_wstring(GetLastError())); }
+                    (void)0; }
             return FolderFailure(error,it->path,code);
         }
         CloseHandle(it->handle);it->handle=INVALID_HANDLE_VALUE;
-        FullLog(L"FOLDER delete disposition accepted "+std::wstring(it->directory?L"directory=":L"file=")+HolyInstalled::Leaf(it->path)+
-            L" attempts="+std::to_wstring(attempts));
+        (void)0;
     }
     return ConfirmFolderAbsent(plan.nodes.front().path,budget,error);
 }
@@ -208,7 +207,7 @@ static BOOL CALLBACK CloseFolderProcessWindow(HWND hwnd,LPARAM parameter) {
     if(PostMessageW(hwnd,WM_CLOSE,0,0)) {ctx->posted->insert(key);++ctx->requests;}
     else {
         const auto code=GetLastError();
-        FullLog(L"FOLDER close window failed pid="+std::to_wstring(pid)+L" code="+std::to_wstring(code));
+        (void)0;
         if(code==ERROR_ACCESS_DENIED)ctx->denied=true;
     }
     return TRUE;
@@ -229,8 +228,8 @@ static bool CloseFolderProgramsAndWait(const std::wstring& root,std::wstring& er
         std::wstring why;ApprovedLaunchTarget ftk;
         ftkVerified=LockRegularFile(installedFtk,ftkLocks)&&VerifyInstalledProgramTrust(ftkIndex,installedFtk,why)&&
             CaptureApprovedLaunchTarget(installedFtk,ftk);
-        if(ftkVerified) {targets.push_back(ftk);FullLog(L"FOLDER verified installed FTK close target");}
-        else FullLog(L"FOLDER FTK close target not verified: "+why);
+        if(ftkVerified) {targets.push_back(ftk);(void)0;}
+        else (void)0;
     }
     const ULONGLONG deadline=GetTickCount64()+60000;
     struct WaitingScope{~WaitingScope(){SetCleanupWaiting(false);}} waiting;
@@ -295,14 +294,14 @@ static bool CloseFolderProgramsAndWait(const std::wstring& root,std::wstring& er
         }
         FolderCloseContext context{&processes,&posted};
         EnumWindows(CloseFolderProcessWindow,reinterpret_cast<LPARAM>(&context));
-        if(context.requests)FullLog(L"FOLDER requested normal close windows="+std::to_wstring(context.requests));
+        if(context.requests)(void)0;
         if(context.denied) {
             error=L"Windows не разрешила закрыть окно приложения с более высокими правами (возможно, FTK Imager). Закройте его вручную либо запустите HolyCheck с такими же правами через обычный UAC. Папка не удалялась.";
             return false;
         }
         if(GetTickCount64()>=deadline) {
             error=L"Папка не удалена: приложения ещё работают. Завершите FTK/другие приложения и ответьте на их диалоги сохранения. Принудительное завершение не выполнялось.";
-            FullLog(L"FOLDER close wait timed out; deletion not started");return false;
+            (void)0;return false;
         }
         SetCleanupWaiting(true);Sleep(500);
     }
@@ -352,7 +351,7 @@ static void RemoveInstalledProductsThenFolder(DeleteAllMessage& result) {
     }
     std::wstring closeError;
     if(!CloseFolderProgramsAndWait(g_appDir,closeError)) {
-        FullLog(L"DELETE initial graceful close incomplete: "+closeError);
+        (void)0;
         if(g_cancelRequested.load()){result.localOk=false;result.localSkipped=true;return;}
         // A vendor may close its own app. A failed close is not success, but
         // must not prevent the other independently validated vendor wizards.
@@ -373,7 +372,7 @@ static void RemoveInstalledProductsThenFolder(DeleteAllMessage& result) {
         ProductRemovalReport report;report.name=product.label;
         if(!readable)report.error=L"Не удалось прочитать состояние регистрации. Удаление не подтверждено.";
         else report.ok=LaunchRegisteredProductUninstallerNoWait(product.label,product.matcher,installed,report.error);
-        FullLog(L"DELETE product="+report.name+L" ok="+std::to_wstring(report.ok)+L" reason="+report.error);
+        (void)0;
         if(!report.ok) {
             if(!result.localError.empty())result.localError+=L"\n\n";
             result.localError+=report.name+L": "+report.error;
@@ -390,14 +389,14 @@ static void RemoveInstalledProductsThenFolder(DeleteAllMessage& result) {
 void DeleteAllDownloaded() {
     if(g_closeWhenIdle||g_cancelRequested.load())return;
     if(!TryBeginDeleteAll()){MessageBoxW(g_mainWindow,L"Сначала дождитесь завершения текущих загрузок или распаковки.",L"HolyCheck",MB_OK|MB_ICONINFORMATION);return;}
-    FullLog(L"DELETE requested folder=Downloads/HolyCheck uninstallers=visible-validated-wait");HWND target=g_mainWindow;
+    (void)0;HWND target=g_mainWindow;
     StartWorker(-1,[target] {
         const HRESULT hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
         struct ComScope{HRESULT hr;~ComScope(){if(SUCCEEDED(hr))CoUninitialize();}} com{hr};
         auto result=std::make_unique<DeleteAllMessage>();
         RemoveInstalledProductsThenFolder(*result);
         if(g_cancelRequested.load()){result->localOk=false;result->localSkipped=true;}
-        FullLog(L"DELETE COMPLETE ok="+std::to_wstring(result->localOk)+L" removed="+std::to_wstring(result->folderRemoved)+L" reason="+result->localError);
+        (void)0;
         if(!PostDeleteAllResult(target,std::move(result)))g_deleteAllBusy.store(false);
     });
 }

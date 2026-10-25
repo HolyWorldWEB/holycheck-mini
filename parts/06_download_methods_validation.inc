@@ -24,7 +24,7 @@ static bool ReusePreviousSsPayload(int item,std::wstring& error) {
         ~OutputScope(){
             if(!published){FILE_DISPOSITION_INFO remove{TRUE};
                 if(!SetFileInformationByHandle(file,FileDispositionInfo,&remove,sizeof(remove)))
-                    FullLog(L"SS own partial cleanup failed code="+std::to_wstring(GetLastError()));}
+                    (void)0;}
             CloseHandle(file);
         }
     } scope{output};
@@ -44,7 +44,7 @@ static bool ReusePreviousSsPayload(int item,std::wstring& error) {
     }
     if(!PublishOpenDownload(output,ItemPath(item))){error=L"Файл ss уже существует или публикация пакета не удалась.";return false;}
     scope.published=true;
-    FullLog(L"SS reused verified previous payload item="+std::to_wstring(item));return true;
+    (void)0;return true;
 }
 
 // One operation per item. All scanning, hashing, extraction and ShellExecute
@@ -57,7 +57,8 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
     const HWND target = g_mainWindow;
     const auto queuedAt=GetTickCount64();
     StartWorker(itemIndex, [target, itemIndex, openAfterDownload, queuedAt] {
-        const auto workerStarted=GetTickCount64();
+        (void)queuedAt;
+        [[maybe_unused]] const auto workerStarted=GetTickCount64();
         struct ComScope {
             HRESULT hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
             ~ComScope() { if (SUCCEEDED(hr)) CoUninitialize(); }
@@ -76,7 +77,7 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
                     if(launch.hProcess)CloseHandle(launch.hProcess);}
             }
             if(!result->ok&&result->text.empty())result->text=L"Открытие сайта отменено либо адрес не разрешён.";
-            FullLog(L"WEBSITE item="+std::to_wstring(itemIndex)+L" ok="+std::to_wstring(result->ok));
+            (void)0;
             if(!PostDownloadResult(target,std::move(result)))MarkIdle(itemIndex);
             return; // No file path, SHA bypass, download, installer or browser tracking.
         }
@@ -89,13 +90,13 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
         result->itemIndex = itemIndex;
         result->openAfterDownload = false;
         result->showError = openAfterDownload;
-        FullLog(std::wstring(L"ITEM start name=") + kItems[itemIndex].name + L" open=" + std::to_wstring(openAfterDownload));
-        FullLog(L"PIPELINE item="+std::to_wstring(itemIndex)+L" queueMs="+std::to_wstring(workerStarted-queuedAt)+L" setupMs="+std::to_wstring(GetTickCount64()-workerStarted));
+        (void)0;
+        (void)0;
         if(openAfterDownload&&!g_cancelRequested.load()&&!IsReportedUnsafePayload(itemIndex)&&
             !IsSystemInformerItemIndex(itemIndex)&&!IsFtkImagerItemIndex(itemIndex)&&
             !IsRecuvaItemIndex(itemIndex)&&!IsProcessHackerItemIndex(itemIndex)&&ActivateAlreadyRunningItem(itemIndex,L"")) {
             result->ok=true;result->launched=true;
-            FullLog(L"ITEM activated existing process item="+std::to_wstring(itemIndex));
+            (void)0;
             if(!PostDownloadResult(target,std::move(result)))MarkIdle(itemIndex);
             return;
         }
@@ -159,8 +160,8 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
                 ClearCachedLaunchPath(itemIndex);
             }
             if (ok && openAfterDownload && EndsWithI(kItems[itemIndex].file, L".zip")) {
-                const auto lockAt=GetTickCount64();tabGuard.lock();
-                FullLog(L"EXTRACT item="+std::to_wstring(itemIndex)+L" lockWaitMs="+std::to_wstring(GetTickCount64()-lockAt));
+                [[maybe_unused]] const auto lockAt=GetTickCount64();tabGuard.lock();
+                (void)0;
                 if(g_cancelRequested.load()){ok=false;error=L"Операция отменена.";}
                 launchPath = GetCachedLaunchPath(itemIndex);
                 if (ok && launchPath.empty()) {
@@ -170,7 +171,7 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
                     // second extraction/parent-walk when its files already exist.
                     ok = LoadArchiveInventory(itemIndex, error);
                     if(ok && HaveArchiveFilesOnDisk(itemIndex)) {
-                        FullLog(L"ZIP reuse existing files item="+std::to_wstring(itemIndex));
+                        (void)0;
                     } else if(ok) {
                         // Missing files use the normal collision-safe extractor.
                         ok = ExtractVerifiedZip(itemIndex, path, destination, error);
@@ -186,13 +187,13 @@ void StartDownload(int itemIndex, bool openAfterDownload = true) {
         }
         if (ok && g_cancelRequested.load()) { ok = false; error = L"Операция отменена."; }
         if (ok && openAfterDownload) {
-            const auto launchAt=GetTickCount64();
+            [[maybe_unused]] const auto launchAt=GetTickCount64();
             ok = OpenTrackedPath(itemIndex, launchPath, error);
-            FullLog(L"OPEN item="+std::to_wstring(itemIndex)+L" verifyAndShellMs="+std::to_wstring(GetTickCount64()-launchAt));
+            (void)0;
             result->launched = ok;
         }
         if(g_cancelRequested.load()){ok=false;error=L"Операция отменена.";}
-        FullLog(std::wstring(L"ITEM completed name=") + kItems[itemIndex].name + L" ok=" + std::to_wstring(ok) + L" downloaded=" + std::to_wstring(result->downloaded) + L" launched=" + std::to_wstring(result->launched) + L" reason=" + error);
+        (void)0;
         result->ok = ok;
         result->text = error;
         if (!PostDownloadResult(target, std::move(result))) MarkIdle(itemIndex);
